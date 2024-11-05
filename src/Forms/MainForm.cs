@@ -2,23 +2,29 @@
 using System.Drawing;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
+using ModernTextViewer.src.Services;
+using ModernTextViewer.src.Models;
 
 namespace ModernTextViewer
 {
-    public partial class Form1 : Form
+    public partial class MainForm : Form
     {
         private TextBox textBox;
         private Panel titleBar;
         private Button closeButton;
         private Button maximizeButton;
         private Button minimizeButton;
+        private Panel bottomToolbar;
+        private Button saveButton;
         private const int RESIZE_BORDER = 8;
         private const int TITLE_BAR_WIDTH = 24;
         private const float MIN_FONT_SIZE = 6f;
         private const float MAX_FONT_SIZE = 72f;
         private float currentFontSize = 10f;
+        private readonly FileService fileService;
+        private readonly DocumentModel document;
 
-        public Form1()
+        public MainForm()
         {
             InitializeComponent();
 
@@ -119,6 +125,12 @@ namespace ModernTextViewer
 
             this.LocationChanged += Form1_LocationChanged;
             this.MinimumSize = new Size(200, 100);
+
+            // Initialize services and models
+            fileService = new FileService();
+            document = new DocumentModel();
+
+            InitializeBottomToolbar();
         }
 
         private void TextBox_MouseWheel(object sender, MouseEventArgs e)
@@ -152,6 +164,36 @@ namespace ModernTextViewer
             {
                 this.Top = lowestTaskbarPoint - this.Height;
             }
+        }
+
+        private void InitializeBottomToolbar()
+        {
+            bottomToolbar = new Panel
+            {
+                Height = 30,
+                Dock = DockStyle.Bottom,
+                BackColor = Color.WhiteSmoke
+            };
+
+            saveButton = new Button
+            {
+                Text = "💾",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Symbol", 12),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0)
+            };
+
+            saveButton.FlatAppearance.BorderSize = 0;
+            saveButton.Click += SaveButton_Click;
+            
+            bottomToolbar.Controls.Add(saveButton);
+            this.Controls.Add(bottomToolbar);
+            
+            bottomToolbar.BringToFront();
         }
 
         // Constants for window messages
@@ -275,6 +317,40 @@ namespace ModernTextViewer
                 Color.LightGray, 1, ButtonBorderStyle.Solid,
                 Color.LightGray, 1, ButtonBorderStyle.Solid,
                 Color.LightGray, 1, ButtonBorderStyle.Solid);
+        }
+
+        private async void SaveButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                using (SaveFileDialog saveDialog = new SaveFileDialog())
+                {
+                    saveDialog.Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*";
+                    saveDialog.FilterIndex = 1;
+                    
+                    if (saveDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        await fileService.SaveFileAsync(saveDialog.FileName, textBox.Text);
+                        document.FilePath = saveDialog.FileName;
+                        document.ResetDirty();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving file: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.S))
+            {
+                SaveButton_Click(this, EventArgs.Empty);
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
     }
 }
