@@ -8,19 +8,62 @@ namespace ModernTextViewer.src.Models
 {
     public class DocumentModel
     {
-        public string Content { get; set; } = string.Empty;
-        public string FilePath { get; set; } = string.Empty;
-        public bool IsDirty { get; set; }
+        private string content = string.Empty;
+        private string filePath = string.Empty;
+        private bool isDirty;
 
-        public void SetContent(string content)
+        public string FilePath 
+        { 
+            get => filePath;
+            set
+            {
+                if (filePath != value)
+                {
+                    filePath = value;
+                    OnFilePathChanged();
+                }
+            }
+        }
+
+        public bool IsDirty 
+        { 
+            get => isDirty;
+            set
+            {
+                if (isDirty != value)
+                {
+                    isDirty = value;
+                    OnDirtyChanged();
+                }
+            }
+        }
+
+        public string Content
         {
-            Content = content;
-            IsDirty = true;
+            get => content;
+            set
+            {
+                if (content != value)
+                {
+                    content = value;
+                    IsDirty = true;
+                }
+            }
         }
 
         public void ResetDirty()
         {
             IsDirty = false;
+        }
+
+        protected virtual void OnFilePathChanged()
+        {
+            // For future use (e.g., updating window title)
+        }
+
+        protected virtual void OnDirtyChanged()
+        {
+            // For future use (e.g., updating UI to show unsaved changes)
         }
     }
 }

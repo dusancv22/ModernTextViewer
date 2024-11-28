@@ -4,111 +4,100 @@ using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using ModernTextViewer.src.Services;
 using ModernTextViewer.src.Models;
+using System.Runtime.InteropServices.Marshalling;
+using System.Diagnostics;
+using System.IO;
 
-namespace ModernTextViewer
+namespace ModernTextViewer.src.Forms
 {
     public partial class MainForm : Form
     {
-        private TextBox textBox;
-        private Panel titleBar;
-        private Button closeButton;
-        private Button maximizeButton;
-        private Button minimizeButton;
-        private Panel bottomToolbar;
-        private Button saveButton;
+        private RichTextBox textBox = null!;
+        private Panel titleBar = null!;
+        private Button closeButton = null!;
+        private Button maximizeButton = null!;
+        private Button minimizeButton = null!;
+        private Panel bottomToolbar = null!;
+        private Button saveButton = null!;
         private const int RESIZE_BORDER = 8;
-        private const int TITLE_BAR_WIDTH = 24;
+        private const int TITLE_BAR_WIDTH = 32;
         private const float MIN_FONT_SIZE = 6f;
         private const float MAX_FONT_SIZE = 72f;
         private float currentFontSize = 10f;
-        private readonly FileService fileService;
-        private readonly DocumentModel document;
+        private readonly DocumentModel document = new DocumentModel();
+        private bool isDarkMode = true;  // Default to dark mode
+        private System.Windows.Forms.Timer autoSaveTimer;
+        private readonly Color darkBackColor = Color.FromArgb(30, 30, 30);
+        private readonly Color darkForeColor = Color.FromArgb(220, 220, 220);
+        private readonly Color darkToolbarColor = Color.FromArgb(45, 45, 45);
+        private Label autoSaveLabel = null!;
 
         public MainForm()
         {
-            InitializeComponent();
+            try
+            {
+                InitializeComponent();
+                
+                autoSaveTimer = new System.Windows.Forms.Timer
+                {
+                    Interval = 5 * 60 * 1000
+                };
+                autoSaveTimer.Tick += AutoSaveTimer_Tick;
+                
+                InitializeUI();
+                
+                autoSaveTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error initializing application: {ex.Message}", 
+                    "Initialization Error", 
+                    MessageBoxButtons.OK, 
+                    MessageBoxIcon.Error);
+                throw;
+            }
+        }
 
+        private void InitializeUI()
+        {
             this.FormBorderStyle = FormBorderStyle.None;
-            this.BackColor = Color.White;
+            this.BackColor = isDarkMode ? darkBackColor : Color.White;
             this.Padding = new Padding(3);
             this.DoubleBuffered = true;
+            this.MinimumSize = new Size(200, 100);
 
+            InitializeTextBox();
+            InitializeBottomToolbar();
+            InitializeTitleBar();
+            InitializeButtons();
+
+            this.Controls.Add(titleBar);
+
+            bottomToolbar?.BringToFront();
+            titleBar?.BringToFront();
+            
+            this.LocationChanged += Form1_LocationChanged;
+
+            this.Shown += (s, e) => 
+            {
+                textBox?.Focus();
+                textBox?.Refresh();  // Force refresh after showing
+            };
+        }
+
+        private void InitializeTitleBar()
+        {
             titleBar = new Panel
             {
                 Width = TITLE_BAR_WIDTH,
                 Dock = DockStyle.Left,
-                BackColor = Color.WhiteSmoke
+                BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke
             };
 
-            minimizeButton = new Button
+            InitializeWindowButtons();
+            
+            titleBar.MouseDown += (sender, e) =>
             {
-                Text = "−",
-                Size = new Size(TITLE_BAR_WIDTH, TITLE_BAR_WIDTH),
-                FlatStyle = FlatStyle.Flat,
-                Dock = DockStyle.Top,
-                ForeColor = Color.Gray,
-                Font = new Font("Arial", 8),
-                Cursor = Cursors.Hand
-            };
-
-            maximizeButton = new Button
-            {
-                Text = "□",
-                Size = new Size(TITLE_BAR_WIDTH, TITLE_BAR_WIDTH),
-                FlatStyle = FlatStyle.Flat,
-                Dock = DockStyle.Top,
-                ForeColor = Color.Gray,
-                Font = new Font("Arial", 8),
-                Cursor = Cursors.Hand
-            };
-
-            closeButton = new Button
-            {
-                Text = "×",
-                Size = new Size(TITLE_BAR_WIDTH, TITLE_BAR_WIDTH),
-                FlatStyle = FlatStyle.Flat,
-                Dock = DockStyle.Top,
-                ForeColor = Color.Gray,
-                Font = new Font("Arial", 10),
-                Cursor = Cursors.Hand
-            };
-
-            textBox = new TextBox
-            {
-                Multiline = true,
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
-                Font = new Font("Consolas", currentFontSize),
-                WordWrap = true,
-                ScrollBars = ScrollBars.Vertical
-            };
-
-            textBox.MouseWheel += TextBox_MouseWheel;
-
-            // Add controls in the correct order (top to bottom)
-            titleBar.Controls.Add(closeButton);
-            titleBar.Controls.Add(maximizeButton);
-            titleBar.Controls.Add(minimizeButton);
-
-            this.Controls.Add(textBox);
-            this.Controls.Add(titleBar);
-
-            closeButton.Click += (s, e) => this.Close();
-            maximizeButton.Click += (s, e) => {
-                this.WindowState = this.WindowState == FormWindowState.Maximized
-                    ? FormWindowState.Normal
-                    : FormWindowState.Maximized;
-            };
-            minimizeButton.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
-
-            foreach (Button button in new[] { closeButton, maximizeButton, minimizeButton })
-            {
-                button.FlatAppearance.BorderSize = 0;
-                button.FlatAppearance.MouseOverBackColor = Color.LightGray;
-                button.TextAlign = ContentAlignment.MiddleCenter;
-            }
-
-            titleBar.MouseDown += (s, e) => {
                 if (e.Button == MouseButtons.Left)
                 {
                     if (e.Clicks == 2)
@@ -122,18 +111,102 @@ namespace ModernTextViewer
                     }
                 }
             };
-
-            this.LocationChanged += Form1_LocationChanged;
-            this.MinimumSize = new Size(200, 100);
-
-            // Initialize services and models
-            fileService = new FileService();
-            document = new DocumentModel();
-
-            InitializeBottomToolbar();
         }
 
-        private void TextBox_MouseWheel(object sender, MouseEventArgs e)
+        private void InitializeWindowButtons()
+        {
+            closeButton = CreateWindowButton("×", 12);
+            maximizeButton = CreateWindowButton("□", 10);
+            minimizeButton = CreateWindowButton("−", 10);
+
+            closeButton.Click += (s, e) => this.Close();
+            maximizeButton.Click += (s, e) => {
+                this.WindowState = this.WindowState == FormWindowState.Maximized
+                    ? FormWindowState.Normal
+                    : FormWindowState.Maximized;
+            };
+            minimizeButton.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
+
+            titleBar.Controls.Add(closeButton);
+            titleBar.Controls.Add(maximizeButton);
+            titleBar.Controls.Add(minimizeButton);
+        }
+
+        private Button CreateWindowButton(string text, int fontSize)
+        {
+            return new Button
+            {
+                Text = text,
+                Size = new Size(TITLE_BAR_WIDTH, TITLE_BAR_WIDTH),
+                FlatStyle = FlatStyle.Flat,
+                Dock = DockStyle.Top,
+                ForeColor = isDarkMode ? darkForeColor : Color.Gray,
+                Font = new Font("Arial", fontSize),
+                Cursor = Cursors.Hand
+            };
+        }
+
+        private void InitializeTextBox()
+        {
+            var textBoxContainer = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(1),
+                BackColor = isDarkMode ? darkToolbarColor : Color.LightGray
+            };
+
+            var paddingPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(33, 5, 5, 5),
+                BackColor = isDarkMode ? darkBackColor : Color.White
+            };
+
+            textBox = new RichTextBox
+            {
+                Multiline = true,
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
+                Font = new Font("Consolas", currentFontSize),
+                WordWrap = true,
+                ScrollBars = RichTextBoxScrollBars.Vertical,
+                BackColor = isDarkMode ? darkBackColor : Color.White,
+                ForeColor = isDarkMode ? darkForeColor : Color.Black,
+                AllowDrop = true,
+                TabStop = true,
+                Enabled = true,
+                AcceptsTab = true,
+                DetectUrls = false,
+                EnableAutoDragDrop = false,
+            };
+
+            // Add event handlers
+            textBox.MouseWheel += TextBox_MouseWheel;
+            textBox.DragEnter += TextBox_DragEnter;
+            textBox.DragDrop += TextBox_DragDrop;
+            textBox.TextChanged += (s, e) => document.IsDirty = true;
+            textBox.GotFocus += (s, e) => textBox.Refresh();
+            textBox.KeyDown += (s, e) => 
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    textBox.Refresh();
+                }
+            };
+
+            // Set up control hierarchy
+            paddingPanel.Controls.Add(textBox);
+            textBoxContainer.Controls.Add(paddingPanel);
+            this.Controls.Add(textBoxContainer);
+
+            // Ensure the textbox can receive focus
+            textBox.Select();
+            textBox.Focus();
+
+            textBoxContainer.SendToBack();
+        }
+
+        private void TextBox_MouseWheel(object? sender, MouseEventArgs e)
         {
             if (ModifierKeys == Keys.Control)
             {
@@ -147,7 +220,7 @@ namespace ModernTextViewer
             }
         }
 
-        private void Form1_LocationChanged(object sender, EventArgs e)
+        private void Form1_LocationChanged(object? sender, EventArgs e)
         {
             if (this.WindowState == FormWindowState.Normal)
             {
@@ -172,7 +245,7 @@ namespace ModernTextViewer
             {
                 Height = 30,
                 Dock = DockStyle.Bottom,
-                BackColor = Color.WhiteSmoke
+                BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke
             };
 
             saveButton = new Button
@@ -184,13 +257,25 @@ namespace ModernTextViewer
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI Symbol", 12),
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0, 0, 0, 0)
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? darkForeColor : Color.Gray
+            };
+
+            autoSaveLabel = new Label
+            {
+                Text = "Last autosave: Never",
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleRight,
+                Padding = new Padding(5),
+                ForeColor = isDarkMode ? darkForeColor : Color.Gray
             };
 
             saveButton.FlatAppearance.BorderSize = 0;
             saveButton.Click += SaveButton_Click;
             
             bottomToolbar.Controls.Add(saveButton);
+            bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();
@@ -219,6 +304,16 @@ namespace ModernTextViewer
             public int Right;
             public int Bottom;
 
+            public static RECT FromIntPtr(IntPtr ptr)
+            {
+                return Marshal.PtrToStructure<RECT>(ptr);
+            }
+
+            public void WriteToIntPtr(IntPtr ptr)
+            {
+                Marshal.StructureToPtr(this, ptr, false);
+            }
+
             public void Offset(int x, int y)
             {
                 Left += x;
@@ -229,10 +324,10 @@ namespace ModernTextViewer
         }
 
         [DllImport("user32.dll")]
-        private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
-
-        [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
 
         protected override void WndProc(ref Message m)
         {
@@ -268,7 +363,7 @@ namespace ModernTextViewer
             }
             else if (m.Msg == WM_MOVING || m.Msg == WM_SIZING)
             {
-                RECT rc = (RECT)Marshal.PtrToStructure(m.LParam, typeof(RECT));
+                var rc = RECT.FromIntPtr(m.LParam);
                 Screen[] screens = Screen.AllScreens;
                 int lowestTaskbarPoint = screens.Max(s => s.WorkingArea.Bottom);
 
@@ -280,7 +375,7 @@ namespace ModernTextViewer
                         rc.Bottom = lowestTaskbarPoint;
                 }
 
-                Marshal.StructureToPtr(rc, m.LParam, true);
+                rc.WriteToIntPtr(m.LParam);
             }
 
             base.WndProc(ref m);
@@ -312,28 +407,29 @@ namespace ModernTextViewer
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            ControlPaint.DrawBorder(e.Graphics, this.ClientRectangle,
-                Color.LightGray, 1, ButtonBorderStyle.Solid,
-                Color.LightGray, 1, ButtonBorderStyle.Solid,
-                Color.LightGray, 1, ButtonBorderStyle.Solid,
-                Color.LightGray, 1, ButtonBorderStyle.Solid);
+            using (var pen = new Pen(isDarkMode ? darkToolbarColor : Color.LightGray, 1))
+            {
+                var rect = this.ClientRectangle;
+                e.Graphics.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
+            }
         }
 
-        private async void SaveButton_Click(object sender, EventArgs e)
+        private async void SaveButton_Click(object? sender, EventArgs e)
         {
             try
             {
-                using (SaveFileDialog saveDialog = new SaveFileDialog())
+                var saveDialog = new SaveFileDialog()
                 {
-                    saveDialog.Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*";
-                    saveDialog.FilterIndex = 1;
-                    
-                    if (saveDialog.ShowDialog() == DialogResult.OK)
-                    {
-                        await fileService.SaveFileAsync(saveDialog.FileName, textBox.Text);
-                        document.FilePath = saveDialog.FileName;
-                        document.ResetDirty();
-                    }
+                    Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                    FilterIndex = 1
+                };
+                
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    await FileService.SaveFileAsync(saveDialog.FileName, textBox.Text);
+                    document.FilePath = saveDialog.FileName;
+                    document.ResetDirty();
+                    autoSaveLabel.Text = $"Last save: {DateTime.Now.ToString("HH:mm:ss")}";
                 }
             }
             catch (Exception ex)
@@ -351,6 +447,148 @@ namespace ModernTextViewer
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void TextBox_DragEnter(object? sender, DragEventArgs e)
+        {
+            if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+            {
+                string[]? files = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (files?.Length == 1 && Path.GetExtension(files[0]).ToLower() == ".txt")
+                {
+                    e.Effect = DragDropEffects.Copy;
+                    return;
+                }
+            }
+            e.Effect = DragDropEffects.None;
+        }
+
+        private async void TextBox_DragDrop(object? sender, DragEventArgs e)
+        {
+            string[]? files = e.Data?.GetData(DataFormats.FileDrop) as string[];
+            if (files?.Length == 1)
+            {
+                try
+                {
+                    string content = await FileService.LoadFileAsync(files[0]);
+                    textBox.Text = content;
+                    document.FilePath = files[0];
+                    document.ResetDirty();
+                    
+                    // Start autosave immediately for existing files
+                    autoSaveTimer.Stop(); // Reset the timer
+                    autoSaveTimer.Start(); // Start fresh countdown
+                    autoSaveLabel.Text = $"Autosave ready for: {Path.GetFileName(files[0])}";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error loading file: {ex.Message}", "Error",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private async void AutoSaveTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!string.IsNullOrEmpty(document.FilePath) && document.IsDirty)
+            {
+                try
+                {
+                    await FileService.SaveFileAsync(document.FilePath, textBox.Text);
+                    document.ResetDirty();
+                    autoSaveLabel.Text = $"Last autosave: {DateTime.Now.ToString("HH:mm:ss")}";
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Autosave failed: {ex.Message}");
+                    autoSaveLabel.Text = $"Autosave failed: {DateTime.Now.ToString("HH:mm:ss")}";
+                }
+            }
+        }
+
+        private void TitleBar_MouseDown(object? sender, MouseEventArgs e)
+        {
+            try
+            {
+                if (e.Button == MouseButtons.Left)
+                {
+                    if (e.Clicks == 2)
+                    {
+                        maximizeButton.PerformClick();
+                    }
+                    else
+                    {
+                        if (ReleaseCapture())
+                        {
+                            _ = SendMessage(this.Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error in TitleBar_MouseDown: {ex.Message}");
+            }
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            
+            if (titleBar != null)
+            {
+                titleBar.BringToFront();
+            }
+            if (bottomToolbar != null)
+            {
+                bottomToolbar.BringToFront();
+            }
+        }
+
+        private void InitializeButtons()
+        {
+            foreach (Button button in new[] { closeButton, maximizeButton, minimizeButton })
+            {
+                button.FlatAppearance.BorderSize = 0;
+                button.FlatAppearance.MouseOverBackColor = isDarkMode ? 
+                    Color.FromArgb(60, 60, 60) : Color.LightGray;
+                button.TextAlign = ContentAlignment.MiddleCenter;
+                button.FlatAppearance.MouseDownBackColor = isDarkMode ? 
+                    Color.FromArgb(80, 80, 80) : Color.DarkGray;
+            }
+
+            closeButton.MouseEnter += (s, e) => closeButton.ForeColor = Color.Red;
+            closeButton.MouseLeave += (s, e) => closeButton.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
+        }
+
+        // Add this method to handle text box refresh
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            textBox?.Refresh();  // Refresh textbox when form gets focus
+        }
+
+        private void TextBox_TextChanged(object sender, EventArgs e)
+        {
+            document.IsDirty = true;
+        }
+
+        private void CleanupResources()
+        {
+            autoSaveTimer?.Dispose();
+            textBox?.Dispose();
+            titleBar?.Dispose();
+            closeButton?.Dispose();
+            maximizeButton?.Dispose();
+            minimizeButton?.Dispose();
+            bottomToolbar?.Dispose();
+            saveButton?.Dispose();
+            autoSaveLabel?.Dispose();
+        }
+
+        partial void OnDisposing()
+        {
+            CleanupResources();
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿namespace ModernTextViewer
+﻿namespace ModernTextViewer.src.Forms
 {
     partial class MainForm
     {
@@ -13,9 +13,13 @@
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
-            if (disposing && (components != null))
+            if (disposing)
             {
-                components.Dispose();
+                if (components != null)
+                {
+                    components.Dispose();
+                }
+                OnDisposing();
             }
             base.Dispose(disposing);
         }
@@ -28,12 +32,14 @@
         /// </summary>
         private void InitializeComponent()
         {
-            this.components = new System.ComponentModel.Container();
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(800, 450);
-            this.Text = "Form1";
+            components = new System.ComponentModel.Container();
+            AutoScaleMode = AutoScaleMode.Font;
+            ClientSize = new System.Drawing.Size(800, 450);
+            Text = "Modern Text Viewer";
         }
 
         #endregion
+
+        partial void OnDisposing();
     }
 }
