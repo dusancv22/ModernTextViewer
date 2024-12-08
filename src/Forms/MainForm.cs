@@ -19,6 +19,7 @@ namespace ModernTextViewer.src.Forms
         private Button minimizeButton = null!;
         private Panel bottomToolbar = null!;
         private Button saveButton = null!;
+        private Button quickSaveButton = null!;
         private const int RESIZE_BORDER = 8;
         private const int TITLE_BAR_WIDTH = 32;
         private const float MIN_FONT_SIZE = 6f;
@@ -38,6 +39,7 @@ namespace ModernTextViewer.src.Forms
             {
                 InitializeComponent();
                 
+                // Initialize timer
                 autoSaveTimer = new System.Windows.Forms.Timer
                 {
                     Interval = 5 * 60 * 1000
@@ -176,22 +178,29 @@ namespace ModernTextViewer.src.Forms
                 TabStop = true,
                 Enabled = true,
                 AcceptsTab = true,
-                DetectUrls = false,
-                EnableAutoDragDrop = false,
+                DetectUrls = false
+            };
+
+            // Handle line endings in KeyDown instead of KeyPress
+            textBox.KeyDown += (s, e) => 
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.Handled = true;
+                    int selectionStart = textBox.SelectionStart;
+                    textBox.Text = textBox.Text.Insert(selectionStart, Environment.NewLine);
+                    textBox.SelectionStart = selectionStart + Environment.NewLine.Length;
+                    textBox.ScrollToCaret();
+                }
             };
 
             // Add event handlers
             textBox.MouseWheel += TextBox_MouseWheel;
             textBox.DragEnter += TextBox_DragEnter;
             textBox.DragDrop += TextBox_DragDrop;
-            textBox.TextChanged += (s, e) => document.IsDirty = true;
-            textBox.GotFocus += (s, e) => textBox.Refresh();
-            textBox.KeyDown += (s, e) => 
+            textBox.TextChanged += (s, e) => 
             {
-                if (e.KeyCode == Keys.Enter)
-                {
-                    textBox.Refresh();
-                }
+                document.IsDirty = true;
             };
 
             // Set up control hierarchy
@@ -199,7 +208,6 @@ namespace ModernTextViewer.src.Forms
             textBoxContainer.Controls.Add(paddingPanel);
             this.Controls.Add(textBoxContainer);
 
-            // Ensure the textbox can receive focus
             textBox.Select();
             textBox.Focus();
 
@@ -250,6 +258,19 @@ namespace ModernTextViewer.src.Forms
 
             saveButton = new Button
             {
+                Text = "💾+",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Symbol", 12),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue
+            };
+
+            quickSaveButton = new Button
+            {
                 Text = "💾",
                 Width = 20,
                 Height = 20,
@@ -258,7 +279,7 @@ namespace ModernTextViewer.src.Forms
                 Font = new Font("Segoe UI Symbol", 12),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
-                ForeColor = isDarkMode ? darkForeColor : Color.Gray
+                ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green
             };
 
             autoSaveLabel = new Label
@@ -272,13 +293,27 @@ namespace ModernTextViewer.src.Forms
             };
 
             saveButton.FlatAppearance.BorderSize = 0;
+            quickSaveButton.FlatAppearance.BorderSize = 0;
+            
             saveButton.Click += SaveButton_Click;
+            quickSaveButton.Click += QuickSaveButton_Click;
             
             bottomToolbar.Controls.Add(saveButton);
+            bottomToolbar.Controls.Add(quickSaveButton);
             bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();
+
+            saveButton.MouseEnter += (s, e) => saveButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(160, 200, 255) : Color.DodgerBlue;
+            saveButton.MouseLeave += (s, e) => saveButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
+
+            quickSaveButton.MouseEnter += (s, e) => quickSaveButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(160, 255, 160) : Color.LimeGreen;
+            quickSaveButton.MouseLeave += (s, e) => quickSaveButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(130, 255, 130) : Color.Green;
         }
 
         // Constants for window messages
@@ -439,11 +474,32 @@ namespace ModernTextViewer.src.Forms
             }
         }
 
+        private async void QuickSaveButton_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(document.FilePath))
+            {
+                autoSaveLabel.Text = "Please use 'Save As' first";
+                return;
+            }
+
+            try
+            {
+                await FileService.SaveFileAsync(document.FilePath, textBox.Text);
+                document.ResetDirty();
+                autoSaveLabel.Text = $"Successfully saved: {DateTime.Now.ToString("HH:mm:ss")}";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving file: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (keyData == (Keys.Control | Keys.S))
             {
-                SaveButton_Click(this, EventArgs.Empty);
+                QuickSaveButton_Click(this, EventArgs.Empty);
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -454,10 +510,14 @@ namespace ModernTextViewer.src.Forms
             if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
             {
                 string[]? files = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (files?.Length == 1 && Path.GetExtension(files[0]).ToLower() == ".txt")
+                if (files?.Length == 1)
                 {
-                    e.Effect = DragDropEffects.Copy;
-                    return;
+                    string ext = Path.GetExtension(files[0]).ToLower();
+                    if (ext == ".txt" || ext == ".srt")
+                    {
+                        e.Effect = DragDropEffects.Copy;
+                        return;
+                    }
                 }
             }
             e.Effect = DragDropEffects.None;
@@ -583,6 +643,7 @@ namespace ModernTextViewer.src.Forms
             minimizeButton?.Dispose();
             bottomToolbar?.Dispose();
             saveButton?.Dispose();
+            quickSaveButton?.Dispose();
             autoSaveLabel?.Dispose();
         }
 
