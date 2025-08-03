@@ -514,7 +514,7 @@ namespace ModernTextViewer.src.Forms
             {
                 var saveDialog = new SaveFileDialog()
                 {
-                    Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                    Filter = "Text files (*.txt)|*.txt|Markdown files (*.md)|*.md|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
                     FilterIndex = 1
                 };
                 
@@ -559,6 +559,12 @@ namespace ModernTextViewer.src.Forms
             if (keyData == (Keys.Control | Keys.S))
             {
                 QuickSaveButton_Click(this, EventArgs.Empty);
+                return true;
+            }
+            
+            if (keyData == (Keys.Control | Keys.Z))
+            {
+                textBox.Undo();
                 return true;
             }
             
@@ -631,7 +637,7 @@ namespace ModernTextViewer.src.Forms
                 if (files?.Length == 1)
                 {
                     string ext = Path.GetExtension(files[0]).ToLower();
-                    if (ext == ".txt" || ext == ".srt")
+                    if (ext == ".txt" || ext == ".srt" || ext == ".md")
                     {
                         e.Effect = DragDropEffects.Copy;
                         return;
