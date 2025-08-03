@@ -7,6 +7,8 @@ using ModernTextViewer.src.Models;
 using System.Runtime.InteropServices.Marshalling;
 using System.Diagnostics;
 using System.IO;
+using System.Drawing.Text;
+using System.ComponentModel;
 
 namespace ModernTextViewer.src.Forms
 {
@@ -20,10 +22,11 @@ namespace ModernTextViewer.src.Forms
         private Panel bottomToolbar = null!;
         private Button saveButton = null!;
         private Button quickSaveButton = null!;
+        private Button fontButton = null!;
         private const int RESIZE_BORDER = 8;
         private const int TITLE_BAR_WIDTH = 32;
-        private const float MIN_FONT_SIZE = 6f;
-        private const float MAX_FONT_SIZE = 72f;
+        private const float MIN_FONT_SIZE = 4f;
+        private const float MAX_FONT_SIZE = 96f;
         private float currentFontSize = 10f;
         private readonly DocumentModel document = new DocumentModel();
         private bool isDarkMode = true;  // Default to dark mode
@@ -32,6 +35,12 @@ namespace ModernTextViewer.src.Forms
         private readonly Color darkForeColor = Color.FromArgb(220, 220, 220);
         private readonly Color darkToolbarColor = Color.FromArgb(45, 45, 45);
         private Label autoSaveLabel = null!;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, int wParam, int lParam);
 
         public MainForm()
         {
@@ -188,8 +197,12 @@ namespace ModernTextViewer.src.Forms
                 {
                     e.Handled = true;
                     int selectionStart = textBox.SelectionStart;
-                    textBox.Text = textBox.Text.Insert(selectionStart, Environment.NewLine);
-                    textBox.SelectionStart = selectionStart + Environment.NewLine.Length;
+                    int selectionLength = textBox.SelectionLength;
+                    
+                    // Replace any selected text with newline, or just insert newline
+                    textBox.SelectedText = Environment.NewLine;
+                    
+                    // The cursor is automatically positioned correctly after SelectedText assignment
                     textBox.ScrollToCaret();
                 }
             };
@@ -218,12 +231,38 @@ namespace ModernTextViewer.src.Forms
         {
             if (ModifierKeys == Keys.Control)
             {
-                float newSize = currentFontSize + (e.Delta > 0 ? 1f : -1f);
-
-                if (newSize >= MIN_FONT_SIZE && newSize <= MAX_FONT_SIZE)
+                float delta = e.Delta > 0 ? 1f : -1f;
+                float newSize = Math.Clamp(currentFontSize + delta, MIN_FONT_SIZE, MAX_FONT_SIZE);
+                
+                if (Math.Abs(newSize - currentFontSize) > 0.01f)
                 {
                     currentFontSize = newSize;
-                    textBox.Font = new Font(textBox.Font.FontFamily, currentFontSize);
+                    
+                    int selectionStart = textBox.SelectionStart;
+                    int selectionLength = textBox.SelectionLength;
+
+                    if (selectionLength > 0)
+                    {
+                        // Preserve the style of each character in the selection
+                        for (int i = selectionStart; i < selectionStart + selectionLength; i++)
+                        {
+                            textBox.Select(i, 1);
+                            Font currentCharFont = textBox.SelectionFont ?? textBox.Font;
+                            FontStyle currentStyle = currentCharFont.Style;
+                            using var newFont = new Font(currentCharFont.FontFamily, currentFontSize, currentStyle);
+                            textBox.SelectionFont = newFont;
+                        }
+                    }
+                    else
+                    {
+                        // Change entire textbox while preserving style
+                        FontStyle currentStyle = textBox.Font.Style;
+                        using var newFont = new Font(textBox.Font.FontFamily, currentFontSize, currentStyle);
+                        textBox.Font = newFont;
+                    }
+
+                    // Restore the original selection
+                    textBox.Select(selectionStart, selectionLength);
                 }
             }
         }
@@ -282,6 +321,28 @@ namespace ModernTextViewer.src.Forms
                 ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green
             };
 
+            fontButton = new Button
+            {
+                Text = "A",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue
+            };
+
+            fontButton.FlatAppearance.BorderSize = 0;
+            fontButton.Click += FontButton_Click;
+            
+            // Add hover effects
+            fontButton.MouseEnter += (s, e) => fontButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(200, 200, 255) : Color.DodgerBlue;
+            fontButton.MouseLeave += (s, e) => fontButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
+
             autoSaveLabel = new Label
             {
                 Text = "Last autosave: Never",
@@ -300,6 +361,7 @@ namespace ModernTextViewer.src.Forms
             
             bottomToolbar.Controls.Add(saveButton);
             bottomToolbar.Controls.Add(quickSaveButton);
+            bottomToolbar.Controls.Add(fontButton);
             bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
@@ -360,9 +422,6 @@ namespace ModernTextViewer.src.Forms
 
         [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
 
         protected override void WndProc(ref Message m)
         {
@@ -502,7 +561,66 @@ namespace ModernTextViewer.src.Forms
                 QuickSaveButton_Click(this, EventArgs.Empty);
                 return true;
             }
+            
+            if (textBox.SelectionLength > 0)
+            {
+                switch (keyData)
+                {
+                    case Keys.Control | Keys.B:
+                        ApplyTextStyle(FontStyle.Bold);
+                        return true;
+                    
+                    case Keys.Control | Keys.I:
+                        ApplyTextStyle(FontStyle.Italic);
+                        return true;
+                    
+                    case Keys.Control | Keys.U:
+                        ApplyTextStyle(FontStyle.Underline);
+                        return true;
+                }
+            }
+            
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void ApplyTextStyle(FontStyle style)
+        {
+            int selectionStart = textBox.SelectionStart;
+            int selectionLength = textBox.SelectionLength;
+            
+            // Get the current font style of the selected text
+            Font currentFont = textBox.SelectionFont ?? textBox.Font;
+            FontStyle newStyle;
+            
+            // Toggle the style
+            if ((currentFont.Style & style) == style)
+            {
+                // Remove the style if it's already applied
+                newStyle = currentFont.Style & ~style;
+            }
+            else
+            {
+                // Add the style if it's not applied
+                newStyle = currentFont.Style | style;
+            }
+            
+            // Create and apply the new font with proper bold weight
+            if (style == FontStyle.Bold)
+            {
+                // For bold, create a new font with the Bold style
+                using var newFont = new Font(currentFont.FontFamily, currentFont.Size, newStyle);
+                textBox.SelectionFont = newFont;
+            }
+            else
+            {
+                // For other styles, use the standard approach
+                using var newFont = new Font(currentFont.FontFamily, currentFont.Size, newStyle);
+                textBox.SelectionFont = newFont;
+            }
+            
+            // Maintain the selection
+            textBox.Select(selectionStart, selectionLength);
+            textBox.Focus();
         }
 
         private void TextBox_DragEnter(object? sender, DragEventArgs e)
@@ -644,12 +762,80 @@ namespace ModernTextViewer.src.Forms
             bottomToolbar?.Dispose();
             saveButton?.Dispose();
             quickSaveButton?.Dispose();
+            fontButton?.Dispose();
             autoSaveLabel?.Dispose();
         }
 
         partial void OnDisposing()
         {
             CleanupResources();
+        }
+
+        private void FontButton_Click(object? sender, EventArgs e)
+        {
+            using (FontDialog fontDialog = new FontDialog())
+            {
+                fontDialog.Font = textBox.Font;
+                fontDialog.ShowEffects = true;
+                fontDialog.MinSize = (int)MIN_FONT_SIZE;
+                fontDialog.MaxSize = (int)MAX_FONT_SIZE;
+                fontDialog.ShowColor = true;
+                fontDialog.Color = textBox.ForeColor;
+
+                // Show the dialog and apply selection if OK was clicked
+                if (fontDialog.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        ApplyFontSelection(fontDialog);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Font dialog error: {ex.Message}");
+                        MessageBox.Show("Error applying font selection", "Font Error", 
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void ApplyFontSelection(FontDialog fontDialog)
+        {
+            int selectionStart = textBox.SelectionStart;
+            int selectionLength = textBox.SelectionLength;
+
+            if (selectionLength > 0)
+            {
+                // Apply to selection while preserving other styles
+                for (int i = selectionStart; i < selectionStart + selectionLength; i++)
+                {
+                    textBox.Select(i, 1);
+                    Font currentCharFont = textBox.SelectionFont ?? textBox.Font;
+                    FontStyle combinedStyle = fontDialog.Font.Style | (currentCharFont.Style & ~FontStyle.Regular);
+                    using var newFont = new Font(fontDialog.Font.FontFamily, fontDialog.Font.Size, combinedStyle);
+                    textBox.SelectionFont = newFont;
+                }
+            }
+            else
+            {
+                // Change the entire textbox font
+                textBox.Font = fontDialog.Font;
+                currentFontSize = fontDialog.Font.Size;
+            }
+
+            // Apply the selected color
+            if (selectionLength > 0)
+            {
+                textBox.SelectionColor = fontDialog.Color;
+            }
+            else
+            {
+                textBox.ForeColor = fontDialog.Color;
+            }
+
+            // Restore the selection
+            textBox.Select(selectionStart, selectionLength);
+            textBox.Focus();
         }
     }
 }
