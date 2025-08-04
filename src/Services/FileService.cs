@@ -2,12 +2,14 @@
 using System.IO;
 using System.Threading.Tasks;
 using System.Text;
+using ModernTextViewer.src.Models;
+using System.Collections.Generic;
 
 namespace ModernTextViewer.src.Services
 {
     public class FileService
     {
-        public static async Task<string> LoadFileAsync(string filePath)
+        public static async Task<(string content, List<HyperlinkModel> hyperlinks)> LoadFileAsync(string filePath)
         {
             if (string.IsNullOrEmpty(filePath))
                 throw new ArgumentException("File path cannot be empty");
@@ -24,10 +26,13 @@ namespace ModernTextViewer.src.Services
                     content = await reader.ReadToEndAsync();
                 }
 
+                // Extract hyperlinks if present
+                var (cleanContent, hyperlinks) = HyperlinkService.ExtractHyperlinkMetadata(content);
+
                 // Normalize line endings to system default
-                content = content.Replace("\r\n", "\n").Replace("\r", "\n");
-                string[] lines = content.Split('\n');
-                return string.Join(Environment.NewLine, lines);
+                cleanContent = cleanContent.Replace("\r\n", "\n").Replace("\r", "\n");
+                string[] lines = cleanContent.Split('\n');
+                return (string.Join(Environment.NewLine, lines), hyperlinks);
             }
             catch (Exception ex)
             {
@@ -35,13 +40,19 @@ namespace ModernTextViewer.src.Services
             }
         }
 
-        public static async Task SaveFileAsync(string filePath, string content)
+        public static async Task SaveFileAsync(string filePath, string content, List<HyperlinkModel>? hyperlinks = null)
         {
             if (string.IsNullOrEmpty(filePath))
                 throw new ArgumentException("File path cannot be empty");
 
             try
             {
+                // Add hyperlink metadata if present
+                if (hyperlinks != null && hyperlinks.Count > 0)
+                {
+                    content = HyperlinkService.AddHyperlinkMetadata(content, hyperlinks);
+                }
+
                 // Split content into lines and rejoin with Windows line endings
                 string[] lines = content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
                 content = string.Join("\r\n", lines);

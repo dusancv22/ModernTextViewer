@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Drawing.Text;
 using System.ComponentModel;
+using System.Linq;
 
 namespace ModernTextViewer.src.Forms
 {
@@ -23,6 +24,10 @@ namespace ModernTextViewer.src.Forms
         private Button saveButton = null!;
         private Button quickSaveButton = null!;
         private Button fontButton = null!;
+        private Button hyperlinkButton = null!;
+        private ContextMenuStrip textBoxContextMenu = null!;
+        private string lastTextContent = string.Empty;
+        private int lastSelectionStart = 0;
         private const int RESIZE_BORDER = 8;
         private const int TITLE_BAR_WIDTH = 32;
         private const float MIN_FONT_SIZE = 4f;
@@ -35,6 +40,7 @@ namespace ModernTextViewer.src.Forms
         private readonly Color darkForeColor = Color.FromArgb(220, 220, 220);
         private readonly Color darkToolbarColor = Color.FromArgb(45, 45, 45);
         private Label autoSaveLabel = null!;
+        private FindReplaceDialog? findReplaceDialog;
 
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
@@ -207,14 +213,18 @@ namespace ModernTextViewer.src.Forms
                 }
             };
 
+            // Initialize context menu
+            InitializeContextMenu();
+            textBox.ContextMenuStrip = textBoxContextMenu;
+
             // Add event handlers
             textBox.MouseWheel += TextBox_MouseWheel;
             textBox.DragEnter += TextBox_DragEnter;
             textBox.DragDrop += TextBox_DragDrop;
-            textBox.TextChanged += (s, e) => 
-            {
-                document.IsDirty = true;
-            };
+            textBox.TextChanged += TextBox_TextChanged;
+            textBox.MouseClick += TextBox_MouseClick;
+            textBox.MouseMove += TextBox_MouseMove;
+            textBox.KeyDown += TextBox_KeyDown;
 
             // Set up control hierarchy
             paddingPanel.Controls.Add(textBox);
@@ -223,6 +233,7 @@ namespace ModernTextViewer.src.Forms
 
             textBox.Select();
             textBox.Focus();
+            lastTextContent = textBox.Text;
 
             textBoxContainer.SendToBack();
         }
@@ -343,6 +354,28 @@ namespace ModernTextViewer.src.Forms
             fontButton.MouseLeave += (s, e) => fontButton.ForeColor = isDarkMode ? 
                 Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
 
+            hyperlinkButton = new Button
+            {
+                Text = "🔗",
+                Width = 25,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue
+            };
+
+            hyperlinkButton.FlatAppearance.BorderSize = 0;
+            hyperlinkButton.Click += HyperlinkButton_Click;
+            
+            // Add hover effects
+            hyperlinkButton.MouseEnter += (s, e) => hyperlinkButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(130, 220, 255) : Color.DodgerBlue;
+            hyperlinkButton.MouseLeave += (s, e) => hyperlinkButton.ForeColor = isDarkMode ? 
+                Color.FromArgb(100, 200, 255) : Color.Blue;
+
             autoSaveLabel = new Label
             {
                 Text = "Last autosave: Never",
@@ -362,6 +395,7 @@ namespace ModernTextViewer.src.Forms
             bottomToolbar.Controls.Add(saveButton);
             bottomToolbar.Controls.Add(quickSaveButton);
             bottomToolbar.Controls.Add(fontButton);
+            bottomToolbar.Controls.Add(hyperlinkButton);
             bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
@@ -520,7 +554,7 @@ namespace ModernTextViewer.src.Forms
                 
                 if (saveDialog.ShowDialog() == DialogResult.OK)
                 {
-                    await FileService.SaveFileAsync(saveDialog.FileName, textBox.Text);
+                    await FileService.SaveFileAsync(saveDialog.FileName, textBox.Text, document.Hyperlinks);
                     document.FilePath = saveDialog.FileName;
                     document.ResetDirty();
                     autoSaveLabel.Text = $"Last save: {DateTime.Now.ToString("HH:mm:ss")}";
@@ -543,7 +577,7 @@ namespace ModernTextViewer.src.Forms
 
             try
             {
-                await FileService.SaveFileAsync(document.FilePath, textBox.Text);
+                await FileService.SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
                 document.ResetDirty();
                 autoSaveLabel.Text = $"Successfully saved: {DateTime.Now.ToString("HH:mm:ss")}";
             }
@@ -565,6 +599,12 @@ namespace ModernTextViewer.src.Forms
             if (keyData == (Keys.Control | Keys.Z))
             {
                 textBox.Undo();
+                return true;
+            }
+            
+            if (keyData == (Keys.Control | Keys.F))
+            {
+                ShowFindReplaceDialog();
                 return true;
             }
             
@@ -654,10 +694,12 @@ namespace ModernTextViewer.src.Forms
             {
                 try
                 {
-                    string content = await FileService.LoadFileAsync(files[0]);
+                    var (content, hyperlinks) = await FileService.LoadFileAsync(files[0]);
                     textBox.Text = content;
                     document.FilePath = files[0];
+                    document.Hyperlinks = hyperlinks;
                     document.ResetDirty();
+                    UpdateHyperlinkRendering();
                     
                     // Start autosave immediately for existing files
                     autoSaveTimer.Stop(); // Reset the timer
@@ -678,7 +720,7 @@ namespace ModernTextViewer.src.Forms
             {
                 try
                 {
-                    await FileService.SaveFileAsync(document.FilePath, textBox.Text);
+                    await FileService.SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
                     document.ResetDirty();
                     autoSaveLabel.Text = $"Last autosave: {DateTime.Now.ToString("HH:mm:ss")}";
                 }
@@ -752,13 +794,27 @@ namespace ModernTextViewer.src.Forms
             textBox?.Refresh();  // Refresh textbox when form gets focus
         }
 
-        private void TextBox_TextChanged(object sender, EventArgs e)
+        private void ShowFindReplaceDialog()
         {
-            document.IsDirty = true;
+            if (findReplaceDialog == null || findReplaceDialog.IsDisposed)
+            {
+                findReplaceDialog = new FindReplaceDialog(textBox, isDarkMode);
+                findReplaceDialog.Owner = this;
+            }
+
+            if (textBox.SelectionLength > 0)
+            {
+                findReplaceDialog.SetSearchText(textBox.SelectedText);
+            }
+
+            findReplaceDialog.Show();
+            findReplaceDialog.BringToFront();
+            findReplaceDialog.Focus();
         }
 
         private void CleanupResources()
         {
+            findReplaceDialog?.Dispose();
             autoSaveTimer?.Dispose();
             textBox?.Dispose();
             titleBar?.Dispose();
@@ -842,6 +898,377 @@ namespace ModernTextViewer.src.Forms
             // Restore the selection
             textBox.Select(selectionStart, selectionLength);
             textBox.Focus();
+        }
+
+        private void InitializeContextMenu()
+        {
+            textBoxContextMenu = new ContextMenuStrip();
+            
+            var cutItem = new ToolStripMenuItem("Cut", null, (s, e) => textBox.Cut());
+            cutItem.ShortcutKeys = Keys.Control | Keys.X;
+            
+            var copyItem = new ToolStripMenuItem("Copy", null, (s, e) => CopyWithHyperlinks());
+            copyItem.ShortcutKeys = Keys.Control | Keys.C;
+            
+            var pasteItem = new ToolStripMenuItem("Paste", null, (s, e) => textBox.Paste());
+            pasteItem.ShortcutKeys = Keys.Control | Keys.V;
+            
+            var selectAllItem = new ToolStripMenuItem("Select All", null, (s, e) => textBox.SelectAll());
+            selectAllItem.ShortcutKeys = Keys.Control | Keys.A;
+            
+            var hyperlinkItem = new ToolStripMenuItem("Add Hyperlink...", null, (s, e) => ShowHyperlinkDialog());
+            hyperlinkItem.ShortcutKeys = Keys.Control | Keys.K;
+            
+            textBoxContextMenu.Items.AddRange(new ToolStripItem[] {
+                cutItem,
+                copyItem,
+                pasteItem,
+                new ToolStripSeparator(),
+                selectAllItem,
+                new ToolStripSeparator(),
+                hyperlinkItem
+            });
+            
+            textBoxContextMenu.Opening += (s, e) =>
+            {
+                hyperlinkItem.Enabled = textBox.SelectionLength > 0;
+                cutItem.Enabled = textBox.SelectionLength > 0;
+                copyItem.Enabled = textBox.SelectionLength > 0;
+                
+                var hyperlink = document.GetHyperlinkAtPosition(textBox.SelectionStart);
+                if (hyperlink != null)
+                {
+                    hyperlinkItem.Text = "Edit Hyperlink...";
+                }
+                else
+                {
+                    hyperlinkItem.Text = "Add Hyperlink...";
+                }
+            };
+            
+            if (isDarkMode)
+            {
+                textBoxContextMenu.BackColor = darkToolbarColor;
+                textBoxContextMenu.ForeColor = darkForeColor;
+                textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+            }
+        }
+
+        private void HyperlinkButton_Click(object? sender, EventArgs e)
+        {
+            ShowHyperlinkDialog();
+        }
+
+        private void ShowHyperlinkDialog()
+        {
+            if (textBox.SelectionLength == 0 && document.GetHyperlinkAtPosition(textBox.SelectionStart) == null)
+            {
+                MessageBox.Show("Please select text to create a hyperlink.", "No Selection", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var existingHyperlink = document.GetHyperlinkAtPosition(textBox.SelectionStart);
+            string? existingUrl = existingHyperlink?.Url;
+            string? existingText = existingHyperlink?.DisplayText;
+
+            if (existingHyperlink == null)
+            {
+                existingText = textBox.SelectedText;
+            }
+
+            using var dialog = new HyperlinkDialog(isDarkMode, existingUrl, existingText);
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                if (dialog.RemoveHyperlink && existingHyperlink != null)
+                {
+                    document.RemoveHyperlink(existingHyperlink);
+                    UpdateHyperlinkRendering();
+                }
+                else if (!dialog.RemoveHyperlink)
+                {
+                    if (existingHyperlink != null)
+                    {
+                        existingHyperlink.Url = dialog.Url;
+                        // Keep the existing display text
+                    }
+                    else
+                    {
+                        var newHyperlink = new HyperlinkModel
+                        {
+                            StartIndex = textBox.SelectionStart,
+                            Length = textBox.SelectionLength,
+                            Url = dialog.Url,
+                            DisplayText = textBox.SelectedText
+                        };
+                        document.AddHyperlink(newHyperlink);
+                    }
+                    UpdateHyperlinkRendering();
+                }
+            }
+        }
+
+        private void TextBox_MouseClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                int charIndex = textBox.GetCharIndexFromPosition(e.Location);
+                
+                // Validate that we're actually over text, not empty space
+                if (charIndex >= 0 && charIndex < textBox.TextLength)
+                {
+                    // Get the actual bounds of this character
+                    Point charPos = textBox.GetPositionFromCharIndex(charIndex);
+                    Point nextCharPos = charIndex + 1 < textBox.TextLength ? 
+                        textBox.GetPositionFromCharIndex(charIndex + 1) : 
+                        new Point(charPos.X + 10, charPos.Y);
+                    
+                    // For characters at end of line, use line height for bounds checking
+                    Rectangle charBounds;
+                    if (nextCharPos.Y > charPos.Y || charIndex + 1 >= textBox.TextLength)
+                    {
+                        // Character is at end of line
+                        using (Graphics g = textBox.CreateGraphics())
+                        {
+                            SizeF charSize = g.MeasureString(textBox.Text[charIndex].ToString(), textBox.Font);
+                            charBounds = new Rectangle(charPos.X, charPos.Y, (int)charSize.Width, (int)charSize.Height);
+                        }
+                    }
+                    else
+                    {
+                        // Normal character in middle of line
+                        charBounds = new Rectangle(charPos.X, charPos.Y, nextCharPos.X - charPos.X, textBox.Font.Height);
+                    }
+                    
+                    // Check if click is actually within character bounds
+                    if (charBounds.Contains(e.Location))
+                    {
+                        var hyperlink = document.GetHyperlinkAtPosition(charIndex);
+                        if (hyperlink != null)
+                        {
+                            try
+                            {
+                                System.Diagnostics.Process.Start(new ProcessStartInfo
+                                {
+                                    FileName = hyperlink.Url,
+                                    UseShellExecute = true
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show($"Unable to open link: {ex.Message}", "Error", 
+                                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private void TextBox_MouseMove(object? sender, MouseEventArgs e)
+        {
+            int charIndex = textBox.GetCharIndexFromPosition(e.Location);
+            
+            // Validate that we're actually over text, not empty space
+            if (charIndex >= 0 && charIndex < textBox.TextLength)
+            {
+                // Get the actual bounds of this character
+                Point charPos = textBox.GetPositionFromCharIndex(charIndex);
+                Point nextCharPos = charIndex + 1 < textBox.TextLength ? 
+                    textBox.GetPositionFromCharIndex(charIndex + 1) : 
+                    new Point(charPos.X + 10, charPos.Y);
+                
+                // For characters at end of line, use line height for bounds checking
+                Rectangle charBounds;
+                if (nextCharPos.Y > charPos.Y || charIndex + 1 >= textBox.TextLength)
+                {
+                    // Character is at end of line
+                    using (Graphics g = textBox.CreateGraphics())
+                    {
+                        SizeF charSize = g.MeasureString(textBox.Text[charIndex].ToString(), textBox.Font);
+                        charBounds = new Rectangle(charPos.X, charPos.Y, (int)charSize.Width, (int)charSize.Height);
+                    }
+                }
+                else
+                {
+                    // Normal character in middle of line
+                    charBounds = new Rectangle(charPos.X, charPos.Y, nextCharPos.X - charPos.X, textBox.Font.Height);
+                }
+                
+                // Check if mouse is actually within character bounds
+                if (charBounds.Contains(e.Location))
+                {
+                    var hyperlink = document.GetHyperlinkAtPosition(charIndex);
+                    if (hyperlink != null)
+                    {
+                        textBox.Cursor = Cursors.Hand;
+                        return;
+                    }
+                }
+            }
+            
+            textBox.Cursor = Cursors.IBeam;
+        }
+
+        private void TextBox_KeyDown(object? sender, KeyEventArgs e)
+        {
+            // Handle Ctrl+K for hyperlink dialog
+            if (e.Control && e.KeyCode == Keys.K)
+            {
+                e.Handled = true;
+                ShowHyperlinkDialog();
+            }
+            // Prevent any other control key combinations from affecting hyperlinks
+            else if (e.Control && document.Hyperlinks.Count > 0)
+            {
+                // Don't interfere with standard shortcuts
+                if (e.KeyCode != Keys.C && e.KeyCode != Keys.V && e.KeyCode != Keys.X && 
+                    e.KeyCode != Keys.A && e.KeyCode != Keys.Z && e.KeyCode != Keys.Y &&
+                    e.KeyCode != Keys.S && e.KeyCode != Keys.O && e.KeyCode != Keys.F)
+                {
+                    // For any other control key combination, don't trigger hyperlink updates
+                    e.SuppressKeyPress = false;
+                }
+            }
+        }
+
+        private void TextBox_TextChanged(object? sender, EventArgs e)
+        {
+            document.IsDirty = true;
+            
+            // Calculate the change in text
+            string currentText = textBox.Text;
+            int currentSelectionStart = textBox.SelectionStart;
+            
+            // Simple heuristic: if selection moved forward and text is longer, insertion occurred
+            // if selection stayed same/moved back and text is shorter, deletion occurred
+            int lengthDiff = currentText.Length - lastTextContent.Length;
+            
+            if (lengthDiff != 0)
+            {
+                int changeIndex = currentSelectionStart - Math.Max(0, lengthDiff);
+                
+                // Check if any hyperlinks exist and if the change affects them
+                bool needsHyperlinkUpdate = false;
+                
+                if (document.Hyperlinks.Count > 0)
+                {
+                    // Get the position of the last hyperlink
+                    int lastHyperlinkEnd = document.Hyperlinks.Max(h => h.EndIndex);
+                    
+                    // Only update if the change is before or within hyperlinks
+                    if (changeIndex <= lastHyperlinkEnd)
+                    {
+                        needsHyperlinkUpdate = true;
+                        document.UpdateHyperlinksAfterTextChange(changeIndex, lengthDiff);
+                    }
+                }
+                
+                // Only re-render if hyperlinks were affected
+                if (needsHyperlinkUpdate)
+                {
+                    UpdateHyperlinkRendering();
+                }
+            }
+            
+            lastTextContent = currentText;
+            lastSelectionStart = currentSelectionStart;
+        }
+
+        private void UpdateHyperlinkRendering()
+        {
+            int savedSelectionStart = textBox.SelectionStart;
+            int savedSelectionLength = textBox.SelectionLength;
+
+            // Suspend layout to prevent flashing
+            textBox.SuspendLayout();
+            
+            try
+            {
+                // First, reset all text to default color AND remove underlines
+                // Use a more efficient approach by only resetting what's needed
+                textBox.SelectAll();
+                
+                // Batch the formatting changes
+                textBox.SelectionColor = isDarkMode ? darkForeColor : Color.Black;
+                Font defaultFont = textBox.SelectionFont ?? textBox.Font;
+                if ((defaultFont.Style & FontStyle.Underline) != 0)
+                {
+                    using var nonUnderlinedFont = new Font(defaultFont, defaultFont.Style & ~FontStyle.Underline);
+                    textBox.SelectionFont = nonUnderlinedFont;
+                }
+
+                // Apply hyperlink formatting
+                foreach (var hyperlink in document.Hyperlinks)
+                {
+                    if (hyperlink.StartIndex >= 0 && hyperlink.EndIndex <= textBox.TextLength)
+                    {
+                        textBox.Select(hyperlink.StartIndex, hyperlink.Length);
+                        textBox.SelectionColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
+                        
+                        // Apply underline
+                        Font currentFont = textBox.SelectionFont ?? textBox.Font;
+                        using var underlinedFont = new Font(currentFont, currentFont.Style | FontStyle.Underline);
+                        textBox.SelectionFont = underlinedFont;
+                    }
+                }
+            }
+            finally
+            {
+                // Resume layout
+                textBox.ResumeLayout();
+                
+                // Restore original selection
+                textBox.Select(savedSelectionStart, savedSelectionLength);
+                textBox.ScrollToCaret();
+            }
+        }
+
+        private void CopyWithHyperlinks()
+        {
+            if (textBox.SelectionLength == 0)
+                return;
+
+            string selectedText = textBox.SelectedText;
+            int selectionStart = textBox.SelectionStart;
+            int selectionEnd = selectionStart + textBox.SelectionLength;
+
+            // Find hyperlinks within selection and adjust their display text
+            var selectedHyperlinks = new List<HyperlinkModel>();
+            
+            foreach (var hyperlink in document.Hyperlinks)
+            {
+                // Check if hyperlink overlaps with selection
+                if (hyperlink.StartIndex < selectionEnd && hyperlink.EndIndex > selectionStart)
+                {
+                    int linkStartInSelection = Math.Max(0, hyperlink.StartIndex - selectionStart);
+                    int linkEndInSelection = Math.Min(selectionEnd - selectionStart, hyperlink.EndIndex - selectionStart);
+                    int lengthInSelection = linkEndInSelection - linkStartInSelection;
+                    
+                    // Extract the actual text that's selected from this hyperlink
+                    string displayTextInSelection = selectedText.Substring(linkStartInSelection, lengthInSelection);
+                    
+                    selectedHyperlinks.Add(new HyperlinkModel
+                    {
+                        StartIndex = linkStartInSelection,
+                        Length = lengthInSelection,
+                        Url = hyperlink.Url,
+                        DisplayText = displayTextInSelection
+                    });
+                }
+            }
+
+            HyperlinkService.SetClipboardWithHyperlinks(selectedText, selectedHyperlinks);
+        }
+
+        private class DarkColorTable : ProfessionalColorTable
+        {
+            public override Color MenuItemSelected => Color.FromArgb(60, 60, 60);
+            public override Color MenuItemSelectedGradientBegin => Color.FromArgb(60, 60, 60);
+            public override Color MenuItemSelectedGradientEnd => Color.FromArgb(60, 60, 60);
+            public override Color MenuItemBorder => Color.FromArgb(100, 100, 100);
+            public override Color MenuBorder => Color.FromArgb(100, 100, 100);
+            public override Color ToolStripDropDownBackground => Color.FromArgb(45, 45, 45);
         }
     }
 }
