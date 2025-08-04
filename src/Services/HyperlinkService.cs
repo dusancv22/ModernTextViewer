@@ -240,18 +240,8 @@ namespace ModernTextViewer.src.Services
 
         public static bool IsValidUrl(string url)
         {
-            if (string.IsNullOrWhiteSpace(url))
-                return false;
-
-            if (Uri.TryCreate(url, UriKind.Absolute, out Uri? result))
-            {
-                return result.Scheme == Uri.UriSchemeHttp || 
-                       result.Scheme == Uri.UriSchemeHttps ||
-                       result.Scheme == Uri.UriSchemeMailto ||
-                       result.Scheme == Uri.UriSchemeFtp;
-            }
-
-            return false;
+            // Allow any non-empty URL - browsers will handle protocol addition automatically
+            return !string.IsNullOrWhiteSpace(url);
         }
     }
 }

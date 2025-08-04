@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(dotnet --version)",
+      "Bash(dotnet build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(dotnet run:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install:*)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(claude mcp list:*)",
+      "Bash(claude mcp add:*)",
+      "Bash(claude mcp:*)",
+      "Bash(claude update)",
+      "Bash(ls:*)",
+      "Bash(zip:*)",
+      "Bash(powershell:*)",
+      "Bash(gh release create:*)"
+    ],
+    "deny": []
+  }
+}

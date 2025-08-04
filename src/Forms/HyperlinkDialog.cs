@@ -176,13 +176,6 @@ namespace ModernTextViewer.src.Forms
                     return;
                 }
 
-                if (!HyperlinkService.IsValidUrl(urlTextBox.Text))
-                {
-                    MessageBox.Show("Please enter a valid URL (http://, https://, mailto:, or ftp://).", 
-                        "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
                 Url = urlTextBox.Text.Trim();
             };
 
@@ -226,7 +219,7 @@ namespace ModernTextViewer.src.Forms
         {
             if (isDarkMode)
             {
-                this.BackColor = darkBackColor;
+                this.BackColor = darkToolbarColor;
                 this.ForeColor = darkForeColor;
 
                 titleBar.BackColor = darkToolbarColor;
