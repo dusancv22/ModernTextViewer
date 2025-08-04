@@ -25,6 +25,7 @@ namespace ModernTextViewer.src.Forms
         private Button quickSaveButton = null!;
         private Button fontButton = null!;
         private Button hyperlinkButton = null!;
+        private Button themeToggleButton = null!;
         private ContextMenuStrip textBoxContextMenu = null!;
         private string lastTextContent = string.Empty;
         private int lastSelectionStart = 0;
@@ -41,6 +42,23 @@ namespace ModernTextViewer.src.Forms
         private readonly Color darkToolbarColor = Color.FromArgb(45, 45, 45);
         private Label autoSaveLabel = null!;
         private FindReplaceDialog? findReplaceDialog;
+        
+        // Undo/Redo state tracking
+        private class UndoState
+        {
+            public string Text { get; set; } = "";
+            public List<HyperlinkModel> Hyperlinks { get; set; } = new List<HyperlinkModel>();
+            public int SelectionStart { get; set; }
+            public int SelectionLength { get; set; }
+        }
+        
+        private Stack<UndoState> undoStack = new Stack<UndoState>();
+        private Stack<UndoState> redoStack = new Stack<UndoState>();
+        private bool isUndoRedoOperation = false;
+        private System.Windows.Forms.Timer hyperlinkUpdateTimer;
+        private CancellationTokenSource? hyperlinkCancellationTokenSource;
+        private readonly SemaphoreSlim hyperlinkUpdateSemaphore = new SemaphoreSlim(1, 1);
+        private volatile bool isHyperlinkUpdateInProgress = false;
 
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
@@ -54,12 +72,18 @@ namespace ModernTextViewer.src.Forms
             {
                 InitializeComponent();
                 
-                // Initialize timer
+                // Initialize timers
                 autoSaveTimer = new System.Windows.Forms.Timer
                 {
                     Interval = 5 * 60 * 1000
                 };
                 autoSaveTimer.Tick += AutoSaveTimer_Tick;
+                
+                hyperlinkUpdateTimer = new System.Windows.Forms.Timer
+                {
+                    Interval = 250 // 250ms delay to debounce rapid typing
+                };
+                hyperlinkUpdateTimer.Tick += HyperlinkUpdateTimer_Tick;
                 
                 InitializeUI();
                 
@@ -169,7 +193,7 @@ namespace ModernTextViewer.src.Forms
             {
                 Dock = DockStyle.Fill,
                 Padding = new Padding(1),
-                BackColor = isDarkMode ? darkToolbarColor : Color.LightGray
+                BackColor = isDarkMode ? darkBackColor : Color.White
             };
 
             var paddingPanel = new Panel
@@ -225,6 +249,7 @@ namespace ModernTextViewer.src.Forms
             textBox.MouseClick += TextBox_MouseClick;
             textBox.MouseMove += TextBox_MouseMove;
             textBox.KeyDown += TextBox_KeyDown;
+            textBox.MouseDoubleClick += TextBox_MouseDoubleClick;
 
             // Set up control hierarchy
             paddingPanel.Controls.Add(textBox);
@@ -236,6 +261,9 @@ namespace ModernTextViewer.src.Forms
             lastTextContent = textBox.Text;
 
             textBoxContainer.SendToBack();
+            
+            // Save initial state for undo
+            SaveUndoState();
         }
 
         private void TextBox_MouseWheel(object? sender, MouseEventArgs e)
@@ -349,10 +377,8 @@ namespace ModernTextViewer.src.Forms
             fontButton.Click += FontButton_Click;
             
             // Add hover effects
-            fontButton.MouseEnter += (s, e) => fontButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(200, 200, 255) : Color.DodgerBlue;
-            fontButton.MouseLeave += (s, e) => fontButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
+            fontButton.MouseEnter += FontButton_MouseEnter;
+            fontButton.MouseLeave += FontButton_MouseLeave;
 
             hyperlinkButton = new Button
             {
@@ -371,10 +397,28 @@ namespace ModernTextViewer.src.Forms
             hyperlinkButton.Click += HyperlinkButton_Click;
             
             // Add hover effects
-            hyperlinkButton.MouseEnter += (s, e) => hyperlinkButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(130, 220, 255) : Color.DodgerBlue;
-            hyperlinkButton.MouseLeave += (s, e) => hyperlinkButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(100, 200, 255) : Color.Blue;
+            hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
+            hyperlinkButton.MouseLeave += HyperlinkButton_MouseLeave;
+
+            themeToggleButton = new Button
+            {
+                Text = isDarkMode ? "☀️" : "🌙",
+                Width = 25,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
+            };
+
+            themeToggleButton.FlatAppearance.BorderSize = 0;
+            themeToggleButton.Click += ThemeToggleButton_Click;
+            
+            // Add hover effects
+            themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
+            themeToggleButton.MouseLeave += ThemeToggleButton_MouseLeave;
 
             autoSaveLabel = new Label
             {
@@ -396,20 +440,17 @@ namespace ModernTextViewer.src.Forms
             bottomToolbar.Controls.Add(quickSaveButton);
             bottomToolbar.Controls.Add(fontButton);
             bottomToolbar.Controls.Add(hyperlinkButton);
+            bottomToolbar.Controls.Add(themeToggleButton);
             bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();
 
-            saveButton.MouseEnter += (s, e) => saveButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(160, 200, 255) : Color.DodgerBlue;
-            saveButton.MouseLeave += (s, e) => saveButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
+            saveButton.MouseEnter += SaveButton_MouseEnter;
+            saveButton.MouseLeave += SaveButton_MouseLeave;
 
-            quickSaveButton.MouseEnter += (s, e) => quickSaveButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(160, 255, 160) : Color.LimeGreen;
-            quickSaveButton.MouseLeave += (s, e) => quickSaveButton.ForeColor = isDarkMode ? 
-                Color.FromArgb(130, 255, 130) : Color.Green;
+            quickSaveButton.MouseEnter += QuickSaveButton_MouseEnter;
+            quickSaveButton.MouseLeave += QuickSaveButton_MouseLeave;
         }
 
         // Constants for window messages
@@ -418,6 +459,7 @@ namespace ModernTextViewer.src.Forms
         private const int WM_NCHITTEST = 0x84;
         private const int WM_NCLBUTTONDOWN = 0xA1;
         private const int HT_CAPTION = 0x2;
+        private const int WM_SETREDRAW = 0x000B;
         private const int HTLEFT = 10;
         private const int HTRIGHT = 11;
         private const int HTTOP = 12;
@@ -816,6 +858,7 @@ namespace ModernTextViewer.src.Forms
         {
             findReplaceDialog?.Dispose();
             autoSaveTimer?.Dispose();
+            hyperlinkUpdateTimer?.Dispose();
             textBox?.Dispose();
             titleBar?.Dispose();
             closeButton?.Dispose();
@@ -825,31 +868,37 @@ namespace ModernTextViewer.src.Forms
             saveButton?.Dispose();
             quickSaveButton?.Dispose();
             fontButton?.Dispose();
+            hyperlinkButton?.Dispose();
+            themeToggleButton?.Dispose();
             autoSaveLabel?.Dispose();
         }
 
         partial void OnDisposing()
         {
             CleanupResources();
+            
+            // Cancel any ongoing hyperlink processing
+            hyperlinkCancellationTokenSource?.Cancel();
+            hyperlinkCancellationTokenSource?.Dispose();
+            
+            // Dispose the semaphore
+            hyperlinkUpdateSemaphore?.Dispose();
         }
 
         private void FontButton_Click(object? sender, EventArgs e)
         {
-            using (FontDialog fontDialog = new FontDialog())
+            Font currentFont = textBox.SelectionLength > 0 && textBox.SelectionFont != null
+                ? textBox.SelectionFont
+                : textBox.Font;
+                
+            using (CustomFontDialog fontDialog = new CustomFontDialog(isDarkMode, currentFont))
             {
-                fontDialog.Font = textBox.Font;
-                fontDialog.ShowEffects = true;
-                fontDialog.MinSize = (int)MIN_FONT_SIZE;
-                fontDialog.MaxSize = (int)MAX_FONT_SIZE;
-                fontDialog.ShowColor = true;
-                fontDialog.Color = textBox.ForeColor;
-
                 // Show the dialog and apply selection if OK was clicked
-                if (fontDialog.ShowDialog() == DialogResult.OK)
+                if (fontDialog.ShowDialog(this) == DialogResult.OK)
                 {
                     try
                     {
-                        ApplyFontSelection(fontDialog);
+                        ApplyFontSelection(fontDialog.SelectedFont);
                     }
                     catch (Exception ex)
                     {
@@ -861,7 +910,7 @@ namespace ModernTextViewer.src.Forms
             }
         }
 
-        private void ApplyFontSelection(FontDialog fontDialog)
+        private void ApplyFontSelection(Font newFont)
         {
             int selectionStart = textBox.SelectionStart;
             int selectionLength = textBox.SelectionLength;
@@ -873,32 +922,293 @@ namespace ModernTextViewer.src.Forms
                 {
                     textBox.Select(i, 1);
                     Font currentCharFont = textBox.SelectionFont ?? textBox.Font;
-                    FontStyle combinedStyle = fontDialog.Font.Style | (currentCharFont.Style & ~FontStyle.Regular);
-                    using var newFont = new Font(fontDialog.Font.FontFamily, fontDialog.Font.Size, combinedStyle);
-                    textBox.SelectionFont = newFont;
+                    FontStyle combinedStyle = newFont.Style | (currentCharFont.Style & ~FontStyle.Regular);
+                    var updatedFont = new Font(newFont.FontFamily, newFont.Size, combinedStyle);
+                    textBox.SelectionFont = updatedFont;
                 }
             }
             else
             {
-                // Change the entire textbox font
-                textBox.Font = fontDialog.Font;
-                currentFontSize = fontDialog.Font.Size;
-            }
-
-            // Apply the selected color
-            if (selectionLength > 0)
-            {
-                textBox.SelectionColor = fontDialog.Color;
-            }
-            else
-            {
-                textBox.ForeColor = fontDialog.Color;
+                // Change the entire textbox font - create a new Font object to avoid reference issues
+                var appliedFont = new Font(newFont.FontFamily, newFont.Size, newFont.Style);
+                textBox.Font = appliedFont;
+                currentFontSize = newFont.Size;
+                
+                // Force refresh to ensure the change takes effect
+                textBox.Invalidate();
+                textBox.Update();
             }
 
             // Restore the selection
             textBox.Select(selectionStart, selectionLength);
             textBox.Focus();
         }
+
+        private void ThemeToggleButton_Click(object? sender, EventArgs e)
+        {
+            isDarkMode = !isDarkMode;
+            RefreshTheme();
+        }
+
+        private void UpdatePanelColors(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                if (control is Panel && control != bottomToolbar && control != titleBar)
+                {
+                    control.BackColor = isDarkMode ? darkBackColor : Color.White;
+                    // Recursively update nested panels
+                    UpdatePanelColors(control);
+                }
+            }
+        }
+
+        private void RefreshTheme()
+        {
+            // Update form colors
+            this.BackColor = isDarkMode ? darkBackColor : Color.White;
+            
+            // Update all panels to prevent dark edges
+            UpdatePanelColors(this);
+            
+            // Update text box colors
+            textBox.BackColor = isDarkMode ? darkBackColor : Color.White;
+            textBox.ForeColor = isDarkMode ? darkForeColor : Color.Black;
+            
+            // Update all text to match theme (preserve hyperlink colors)
+            int selectionStart = textBox.SelectionStart;
+            int selectionLength = textBox.SelectionLength;
+            
+            // First, update hyperlink colors properly
+            foreach (var hyperlink in document.Hyperlinks)
+            {
+                textBox.Select(hyperlink.StartIndex, hyperlink.Length);
+                textBox.SelectionColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
+            }
+            
+            // Then update non-hyperlink text
+            for (int i = 0; i < textBox.Text.Length; i++)
+            {
+                textBox.Select(i, 1);
+                var currentHyperlink = document.GetHyperlinkAtPosition(i);
+                
+                // Only update if it's not part of a hyperlink
+                if (currentHyperlink == null)
+                {
+                    textBox.SelectionColor = isDarkMode ? darkForeColor : Color.Black;
+                }
+            }
+            
+            // Restore selection
+            textBox.Select(selectionStart, selectionLength);
+            
+            // Update bottom toolbar
+            bottomToolbar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
+            
+            // Update buttons
+            saveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
+            quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
+            fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
+            hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+            
+            // Update theme toggle button
+            themeToggleButton.Text = isDarkMode ? "☀️" : "🌙";
+            themeToggleButton.ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200);
+            
+            // Update auto save label
+            autoSaveLabel.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
+            
+            // Update title bar
+            titleBar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
+            
+            // Update window control buttons
+            foreach (Button button in new[] { closeButton, maximizeButton, minimizeButton })
+            {
+                button.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
+                button.FlatAppearance.MouseOverBackColor = isDarkMode ? 
+                    Color.FromArgb(60, 60, 60) : Color.LightGray;
+                button.FlatAppearance.MouseDownBackColor = isDarkMode ? 
+                    Color.FromArgb(80, 80, 80) : Color.DarkGray;
+            }
+            
+            // Update hover effects
+            UpdateButtonHoverHandlers();
+            
+            // Update context menu
+            if (textBoxContextMenu != null)
+            {
+                if (isDarkMode)
+                {
+                    textBoxContextMenu.BackColor = darkToolbarColor;
+                    textBoxContextMenu.ForeColor = darkForeColor;
+                    textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+                }
+                else
+                {
+                    textBoxContextMenu.BackColor = SystemColors.Control;
+                    textBoxContextMenu.ForeColor = SystemColors.ControlText;
+                    textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer();
+                }
+            }
+            
+            // Update find/replace dialog if it exists
+            if (findReplaceDialog != null && !findReplaceDialog.IsDisposed)
+            {
+                findReplaceDialog.Dispose();
+                findReplaceDialog = null;
+            }
+            
+            // Refresh the form
+            this.Refresh();
+        }
+
+        private void HyperlinkUpdateTimer_Tick(object? sender, EventArgs e)
+        {
+            hyperlinkUpdateTimer.Stop();
+            UpdateHyperlinkRendering();
+        }
+
+        private void SaveUndoState()
+        {
+            if (isUndoRedoOperation) return;
+            
+            var state = new UndoState
+            {
+                Text = textBox.Text,
+                Hyperlinks = document.Hyperlinks.Select(h => h.Clone()).ToList(),
+                SelectionStart = textBox.SelectionStart,
+                SelectionLength = textBox.SelectionLength
+            };
+            
+            undoStack.Push(state);
+            redoStack.Clear(); // Clear redo stack when new action is performed
+            
+            // Limit undo stack size
+            while (undoStack.Count > 100)
+            {
+                var items = undoStack.ToArray();
+                undoStack.Clear();
+                for (int i = 0; i < items.Length - 1; i++)
+                {
+                    undoStack.Push(items[i]);
+                }
+            }
+        }
+
+        private void RestoreState(UndoState state)
+        {
+            isUndoRedoOperation = true;
+            try
+            {
+                // Restore text
+                textBox.Text = state.Text;
+                
+                // Restore hyperlinks
+                document.Hyperlinks.Clear();
+                foreach (var hyperlink in state.Hyperlinks)
+                {
+                    document.Hyperlinks.Add(hyperlink.Clone());
+                }
+                
+                // Update hyperlink rendering
+                UpdateHyperlinkRendering();
+                
+                // Restore selection
+                textBox.Select(state.SelectionStart, state.SelectionLength);
+            }
+            finally
+            {
+                isUndoRedoOperation = false;
+            }
+        }
+
+        private void PerformUndo()
+        {
+            if (undoStack.Count > 1) // Keep at least one state
+            {
+                // Save current state to redo stack
+                var currentState = new UndoState
+                {
+                    Text = textBox.Text,
+                    Hyperlinks = document.Hyperlinks.Select(h => h.Clone()).ToList(),
+                    SelectionStart = textBox.SelectionStart,
+                    SelectionLength = textBox.SelectionLength
+                };
+                redoStack.Push(currentState);
+                
+                // Pop current state and restore previous
+                undoStack.Pop();
+                if (undoStack.Count > 0)
+                {
+                    RestoreState(undoStack.Peek());
+                }
+            }
+        }
+
+        private void PerformRedo()
+        {
+            if (redoStack.Count > 0)
+            {
+                // Save current state to undo stack
+                SaveUndoState();
+                
+                // Restore state from redo stack
+                var redoState = redoStack.Pop();
+                RestoreState(redoState);
+            }
+        }
+
+        private void UpdateButtonHoverHandlers()
+        {
+            // Remove old handlers first to avoid duplicates
+            saveButton.MouseEnter -= SaveButton_MouseEnter;
+            saveButton.MouseLeave -= SaveButton_MouseLeave;
+            quickSaveButton.MouseEnter -= QuickSaveButton_MouseEnter;
+            quickSaveButton.MouseLeave -= QuickSaveButton_MouseLeave;
+            fontButton.MouseEnter -= FontButton_MouseEnter;
+            fontButton.MouseLeave -= FontButton_MouseLeave;
+            hyperlinkButton.MouseEnter -= HyperlinkButton_MouseEnter;
+            hyperlinkButton.MouseLeave -= HyperlinkButton_MouseLeave;
+            themeToggleButton.MouseEnter -= ThemeToggleButton_MouseEnter;
+            themeToggleButton.MouseLeave -= ThemeToggleButton_MouseLeave;
+            
+            // Add updated handlers
+            saveButton.MouseEnter += SaveButton_MouseEnter;
+            saveButton.MouseLeave += SaveButton_MouseLeave;
+            quickSaveButton.MouseEnter += QuickSaveButton_MouseEnter;
+            quickSaveButton.MouseLeave += QuickSaveButton_MouseLeave;
+            fontButton.MouseEnter += FontButton_MouseEnter;
+            fontButton.MouseLeave += FontButton_MouseLeave;
+            hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
+            hyperlinkButton.MouseLeave += HyperlinkButton_MouseLeave;
+            themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
+            themeToggleButton.MouseLeave += ThemeToggleButton_MouseLeave;
+        }
+
+        private void SaveButton_MouseEnter(object? sender, EventArgs e) => 
+            saveButton.ForeColor = isDarkMode ? Color.FromArgb(160, 200, 255) : Color.DodgerBlue;
+        private void SaveButton_MouseLeave(object? sender, EventArgs e) => 
+            saveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
+            
+        private void QuickSaveButton_MouseEnter(object? sender, EventArgs e) => 
+            quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(160, 255, 160) : Color.LimeGreen;
+        private void QuickSaveButton_MouseLeave(object? sender, EventArgs e) => 
+            quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
+            
+        private void FontButton_MouseEnter(object? sender, EventArgs e) => 
+            fontButton.ForeColor = isDarkMode ? Color.FromArgb(200, 200, 255) : Color.DodgerBlue;
+        private void FontButton_MouseLeave(object? sender, EventArgs e) => 
+            fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
+            
+        private void HyperlinkButton_MouseEnter(object? sender, EventArgs e) => 
+            hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(130, 220, 255) : Color.DodgerBlue;
+        private void HyperlinkButton_MouseLeave(object? sender, EventArgs e) => 
+            hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+            
+        private void ThemeToggleButton_MouseEnter(object? sender, EventArgs e) => 
+            themeToggleButton.ForeColor = isDarkMode ? Color.FromArgb(255, 240, 100) : Color.FromArgb(150, 150, 255);
+        private void ThemeToggleButton_MouseLeave(object? sender, EventArgs e) => 
+            themeToggleButton.ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200);
 
         private void InitializeContextMenu()
         {
@@ -952,6 +1262,12 @@ namespace ModernTextViewer.src.Forms
                 textBoxContextMenu.ForeColor = darkForeColor;
                 textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
             }
+            else
+            {
+                textBoxContextMenu.BackColor = SystemColors.Control;
+                textBoxContextMenu.ForeColor = SystemColors.ControlText;
+                textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer();
+            }
         }
 
         private void HyperlinkButton_Click(object? sender, EventArgs e)
@@ -984,6 +1300,7 @@ namespace ModernTextViewer.src.Forms
                 {
                     document.RemoveHyperlink(existingHyperlink);
                     UpdateHyperlinkRendering();
+                    SaveUndoState(); // Save state after removing hyperlink
                 }
                 else if (!dialog.RemoveHyperlink)
                 {
@@ -1004,6 +1321,7 @@ namespace ModernTextViewer.src.Forms
                         document.AddHyperlink(newHyperlink);
                     }
                     UpdateHyperlinkRendering();
+                    SaveUndoState(); // Save state after adding/editing hyperlink
                 }
             }
         }
@@ -1048,9 +1366,17 @@ namespace ModernTextViewer.src.Forms
                         {
                             try
                             {
+                                string url = hyperlink.Url;
+                                
+                                // Add https:// if no protocol is specified
+                                if (!url.Contains("://") && !url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    url = "https://" + url;
+                                }
+                                
                                 System.Diagnostics.Process.Start(new ProcessStartInfo
                                 {
-                                    FileName = hyperlink.Url,
+                                    FileName = url,
                                     UseShellExecute = true
                                 });
                             }
@@ -1110,11 +1436,83 @@ namespace ModernTextViewer.src.Forms
             textBox.Cursor = Cursors.IBeam;
         }
 
+        private void TextBox_MouseDoubleClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                int charIndex = textBox.GetCharIndexFromPosition(e.Location);
+                if (charIndex >= 0 && charIndex < textBox.TextLength)
+                {
+                    // Find word boundaries
+                    int start = charIndex;
+                    int end = charIndex;
+                    
+                    // Move start backwards to find beginning of word
+                    while (start > 0 && !char.IsWhiteSpace(textBox.Text[start - 1]) && 
+                           !char.IsPunctuation(textBox.Text[start - 1]))
+                    {
+                        start--;
+                    }
+                    
+                    // Move end forward to find end of word
+                    while (end < textBox.TextLength && !char.IsWhiteSpace(textBox.Text[end]) && 
+                           !char.IsPunctuation(textBox.Text[end]))
+                    {
+                        end++;
+                    }
+                    
+                    // Select the word without trailing space
+                    textBox.Select(start, end - start);
+                }
+            }
+        }
+
         private void TextBox_KeyDown(object? sender, KeyEventArgs e)
         {
+            // Handle Ctrl+Z for undo
+            if (e.Control && e.KeyCode == Keys.Z && !e.Shift)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                PerformUndo();
+                return;
+            }
+            
+            // Handle Ctrl+Y or Ctrl+Shift+Z for redo
+            if ((e.Control && e.KeyCode == Keys.Y) || (e.Control && e.Shift && e.KeyCode == Keys.Z))
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                PerformRedo();
+                return;
+            }
+            
+            // Handle Ctrl+V for paste
+            if (e.Control && e.KeyCode == Keys.V)
+            {
+                SaveUndoState(); // Save state before paste
+            }
+            
+            // Handle Ctrl+X for cut
+            if (e.Control && e.KeyCode == Keys.X)
+            {
+                SaveUndoState(); // Save state before cut
+            }
+            
+            // Save state before any text-modifying key
+            if (!e.Control && !isUndoRedoOperation && 
+                (char.IsLetterOrDigit((char)e.KeyValue) || 
+                 e.KeyCode == Keys.Delete || e.KeyCode == Keys.Back ||
+                 e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space ||
+                 e.KeyCode == Keys.Tab))
+            {
+                SaveUndoState();
+            }
+            
             // Handle Ctrl+K for hyperlink dialog
             if (e.Control && e.KeyCode == Keys.K)
             {
+                SaveUndoState(); // Save state before hyperlink changes
                 e.Handled = true;
                 ShowHyperlinkDialog();
             }
@@ -1134,6 +1532,8 @@ namespace ModernTextViewer.src.Forms
 
         private void TextBox_TextChanged(object? sender, EventArgs e)
         {
+            if (isUndoRedoOperation) return;
+            
             document.IsDirty = true;
             
             // Calculate the change in text
@@ -1164,10 +1564,12 @@ namespace ModernTextViewer.src.Forms
                     }
                 }
                 
-                // Only re-render if hyperlinks were affected
+                // Only update rendering if hyperlinks were actually affected
+                // Use debounced timer to avoid blocking during rapid typing
                 if (needsHyperlinkUpdate)
                 {
-                    UpdateHyperlinkRendering();
+                    hyperlinkUpdateTimer.Stop();
+                    hyperlinkUpdateTimer.Start();
                 }
             }
             
@@ -1177,50 +1579,92 @@ namespace ModernTextViewer.src.Forms
 
         private void UpdateHyperlinkRendering()
         {
-            int savedSelectionStart = textBox.SelectionStart;
-            int savedSelectionLength = textBox.SelectionLength;
-
-            // Suspend layout to prevent flashing
-            textBox.SuspendLayout();
+            _ = UpdateHyperlinkRenderingAsync();
+        }
+        
+        private async Task UpdateHyperlinkRenderingAsync()
+        {
+            // Prevent concurrent hyperlink updates
+            if (isHyperlinkUpdateInProgress)
+            {
+                return;
+            }
+            
+            // Cancel any existing hyperlink processing
+            hyperlinkCancellationTokenSource?.Cancel();
+            hyperlinkCancellationTokenSource = new CancellationTokenSource();
+            var cancellationToken = hyperlinkCancellationTokenSource.Token;
+            
+            // Use semaphore to prevent multiple concurrent updates
+            if (!await hyperlinkUpdateSemaphore.WaitAsync(0, cancellationToken).ConfigureAwait(true))
+            {
+                return; // Another update is already in progress
+            }
             
             try
             {
-                // First, reset all text to default color AND remove underlines
-                // Use a more efficient approach by only resetting what's needed
-                textBox.SelectAll();
+                isHyperlinkUpdateInProgress = true;
                 
-                // Batch the formatting changes
-                textBox.SelectionColor = isDarkMode ? darkForeColor : Color.Black;
-                Font defaultFont = textBox.SelectionFont ?? textBox.Font;
-                if ((defaultFont.Style & FontStyle.Underline) != 0)
+                // Capture current state on UI thread
+                var currentText = textBox.Text;
+                var currentHyperlinks = document.Hyperlinks.ToList();
+                var currentIsDarkMode = isDarkMode;
+                var currentFont = textBox.Font;
+                
+                // Skip if text is empty
+                if (string.IsNullOrEmpty(currentText))
                 {
-                    using var nonUnderlinedFont = new Font(defaultFont, defaultFont.Style & ~FontStyle.Underline);
-                    textBox.SelectionFont = nonUnderlinedFont;
+                    return;
                 }
-
-                // Apply hyperlink formatting
-                foreach (var hyperlink in document.Hyperlinks)
+                
+                // Process hyperlinks in background
+                var formattingOperations = await HyperlinkService.ProcessHyperlinksAsync(
+                    currentText, currentHyperlinks, currentIsDarkMode, cancellationToken)
+                    .ConfigureAwait(true);
+                
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Apply formatting on UI thread
+                if (InvokeRequired)
                 {
-                    if (hyperlink.StartIndex >= 0 && hyperlink.EndIndex <= textBox.TextLength)
+                    Invoke(new Action(() =>
                     {
-                        textBox.Select(hyperlink.StartIndex, hyperlink.Length);
-                        textBox.SelectionColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
-                        
-                        // Apply underline
-                        Font currentFont = textBox.SelectionFont ?? textBox.Font;
-                        using var underlinedFont = new Font(currentFont, currentFont.Style | FontStyle.Underline);
-                        textBox.SelectionFont = underlinedFont;
-                    }
+                        try
+                        {
+                            if (!cancellationToken.IsCancellationRequested)
+                            {
+                                HyperlinkService.ApplyFormattingOperations(textBox, formattingOperations, currentFont);
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Expected when cancellation is requested
+                        }
+                        catch (Exception ex)
+                        {
+                            // Log error but don't crash the application
+                            System.Diagnostics.Debug.WriteLine($"Error applying hyperlink formatting: {ex.Message}");
+                        }
+                    }));
                 }
+                else
+                {
+                    HyperlinkService.ApplyFormattingOperations(textBox, formattingOperations, currentFont);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation is requested - do nothing
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't crash the application
+                System.Diagnostics.Debug.WriteLine($"Error in hyperlink rendering: {ex.Message}");
             }
             finally
             {
-                // Resume layout
-                textBox.ResumeLayout();
-                
-                // Restore original selection
-                textBox.Select(savedSelectionStart, savedSelectionLength);
-                textBox.ScrollToCaret();
+                isHyperlinkUpdateInProgress = false;
+                hyperlinkUpdateSemaphore.Release();
             }
         }
 

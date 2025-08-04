@@ -2,9 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using ModernTextViewer.src.Models;
 
@@ -14,6 +17,15 @@ namespace ModernTextViewer.src.Services
     {
         private const string HyperlinkMetadataStart = "<!--HYPERLINKS:";
         private const string HyperlinkMetadataEnd = "-->";
+        
+        // Background processing constants
+        private const int CHUNK_SIZE = 1000; // Process text in chunks of 1000 characters
+        private const int DEBOUNCE_DELAY_MS = 300; // Wait 300ms before processing changes
+        
+        // Windows API for controlling text redraw
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+        private const int WM_SETREDRAW = 0x000B;
         
         public static string GenerateRtfWithHyperlinks(string text, List<HyperlinkModel> hyperlinks)
         {
@@ -240,18 +252,144 @@ namespace ModernTextViewer.src.Services
 
         public static bool IsValidUrl(string url)
         {
-            if (string.IsNullOrWhiteSpace(url))
-                return false;
-
-            if (Uri.TryCreate(url, UriKind.Absolute, out Uri? result))
+            // Allow any non-empty URL - browsers will handle protocol addition automatically
+            return !string.IsNullOrWhiteSpace(url);
+        }
+        
+        /// <summary>
+        /// Represents formatting operations to be applied to text
+        /// </summary>
+        public class FormattingOperation
+        {
+            public int StartIndex { get; set; }
+            public int Length { get; set; }
+            public Color? Color { get; set; }
+            public bool? IsUnderlined { get; set; }
+        }
+        
+        /// <summary>
+        /// Processes hyperlinks in background and returns formatting operations
+        /// </summary>
+        /// <param name="text">The text to process</param>
+        /// <param name="hyperlinks">List of hyperlinks to format</param>
+        /// <param name="isDarkMode">Whether dark mode is enabled</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>List of formatting operations to apply</returns>
+        public static async Task<List<FormattingOperation>> ProcessHyperlinksAsync(
+            string text, 
+            List<HyperlinkModel> hyperlinks, 
+            bool isDarkMode, 
+            CancellationToken cancellationToken = default)
+        {
+            var operations = new List<FormattingOperation>();
+            
+            if (string.IsNullOrEmpty(text) || hyperlinks == null || hyperlinks.Count == 0)
+                return operations;
+            
+            // Process in background thread to avoid UI blocking
+            await Task.Run(() =>
             {
-                return result.Scheme == Uri.UriSchemeHttp || 
-                       result.Scheme == Uri.UriSchemeHttps ||
-                       result.Scheme == Uri.UriSchemeMailto ||
-                       result.Scheme == Uri.UriSchemeFtp;
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Determine colors based on theme
+                var hyperlinkColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
+                var defaultColor = isDarkMode ? Color.FromArgb(220, 220, 220) : Color.Black;
+                
+                // Process text in chunks to improve responsiveness
+                var textLength = text.Length;
+                var validHyperlinks = hyperlinks
+                    .Where(h => h.StartIndex >= 0 && h.EndIndex <= textLength)
+                    .OrderBy(h => h.StartIndex)
+                    .ToList();
+                
+                // First, create operation to reset all text to default formatting
+                operations.Add(new FormattingOperation
+                {
+                    StartIndex = 0,
+                    Length = textLength,
+                    Color = defaultColor,
+                    IsUnderlined = false
+                });
+                
+                // Then add hyperlink formatting operations
+                foreach (var hyperlink in validHyperlinks)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
+                    operations.Add(new FormattingOperation
+                    {
+                        StartIndex = hyperlink.StartIndex,
+                        Length = hyperlink.Length,
+                        Color = hyperlinkColor,
+                        IsUnderlined = true
+                    });
+                }
+                
+            }, cancellationToken).ConfigureAwait(false);
+            
+            return operations;
+        }
+        
+        /// <summary>
+        /// Applies formatting operations to a RichTextBox efficiently
+        /// </summary>
+        /// <param name="textBox">The RichTextBox to format</param>
+        /// <param name="operations">Formatting operations to apply</param>
+        /// <param name="baseFont">Base font for the text</param>
+        public static void ApplyFormattingOperations(RichTextBox textBox, List<FormattingOperation> operations, Font baseFont)
+        {
+            if (textBox == null || operations == null || operations.Count == 0)
+                return;
+            
+            // Save current selection
+            int savedSelectionStart = textBox.SelectionStart;
+            int savedSelectionLength = textBox.SelectionLength;
+            
+            try
+            {
+                // Disable redraw during formatting to prevent flicker
+                SendMessage(textBox.Handle, WM_SETREDRAW, 0, 0);
+                
+                // Apply formatting operations in batches
+                foreach (var operation in operations)
+                {
+                    if (operation.StartIndex >= 0 && operation.StartIndex < textBox.TextLength &&
+                        operation.Length > 0 && operation.StartIndex + operation.Length <= textBox.TextLength)
+                    {
+                        textBox.Select(operation.StartIndex, operation.Length);
+                        
+                        // Apply color if specified
+                        if (operation.Color.HasValue)
+                        {
+                            textBox.SelectionColor = operation.Color.Value;
+                        }
+                        
+                        // Apply underline if specified
+                        if (operation.IsUnderlined.HasValue)
+                        {
+                            var currentFont = textBox.SelectionFont ?? baseFont;
+                            var newStyle = operation.IsUnderlined.Value 
+                                ? currentFont.Style | FontStyle.Underline
+                                : currentFont.Style & ~FontStyle.Underline;
+                            
+                            if (currentFont.Style != newStyle)
+                            {
+                                using var newFont = new Font(currentFont, newStyle);
+                                textBox.SelectionFont = newFont;
+                            }
+                        }
+                    }
+                }
             }
-
-            return false;
+            finally
+            {
+                // Restore original selection
+                textBox.Select(savedSelectionStart, savedSelectionLength);
+                
+                // Re-enable drawing
+                SendMessage(textBox.Handle, WM_SETREDRAW, 1, 0);
+                textBox.Invalidate();
+            }
         }
     }
 }
