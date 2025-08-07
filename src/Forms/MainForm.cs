@@ -21,6 +21,7 @@ namespace ModernTextViewer.src.Forms
         private Button maximizeButton = null!;
         private Button minimizeButton = null!;
         private Panel bottomToolbar = null!;
+        private Button openButton = null!;
         private Button saveButton = null!;
         private Button quickSaveButton = null!;
         private Button fontButton = null!;
@@ -28,6 +29,7 @@ namespace ModernTextViewer.src.Forms
         private Button themeToggleButton = null!;
         private ContextMenuStrip textBoxContextMenu = null!;
         private string lastTextContent = string.Empty;
+        private ToolTip buttonToolTip = null!;
         private int lastSelectionStart = 0;
         private const int RESIZE_BORDER = 8;
         private const int TITLE_BAR_WIDTH = 32;
@@ -81,6 +83,11 @@ namespace ModernTextViewer.src.Forms
                     Interval = 250 // 250ms delay to debounce rapid typing
                 };
                 hyperlinkUpdateTimer.Tick += HyperlinkUpdateTimer_Tick;
+                
+                // Initialize tooltips
+                buttonToolTip = new ToolTip();
+                buttonToolTip.ShowAlways = true;
+                buttonToolTip.AutoPopDelay = 5000;
                 
                 InitializeUI();
                 
@@ -331,6 +338,22 @@ namespace ModernTextViewer.src.Forms
                 BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke
             };
 
+            openButton = new Button
+            {
+                Text = "📁",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Symbol", 12),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(255, 200, 130) : Color.DarkOrange
+            };
+            openButton.FlatAppearance.BorderSize = 0;
+            openButton.Click += OpenButton_Click;
+            buttonToolTip.SetToolTip(openButton, "Open file");
+
             saveButton = new Button
             {
                 Text = "💾+",
@@ -343,6 +366,8 @@ namespace ModernTextViewer.src.Forms
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue
             };
+            saveButton.FlatAppearance.BorderSize = 0;
+            buttonToolTip.SetToolTip(saveButton, "Save as...");
 
             quickSaveButton = new Button
             {
@@ -356,6 +381,8 @@ namespace ModernTextViewer.src.Forms
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green
             };
+            quickSaveButton.FlatAppearance.BorderSize = 0;
+            buttonToolTip.SetToolTip(quickSaveButton, "Quick save");
 
             fontButton = new Button
             {
@@ -372,6 +399,7 @@ namespace ModernTextViewer.src.Forms
 
             fontButton.FlatAppearance.BorderSize = 0;
             fontButton.Click += FontButton_Click;
+            buttonToolTip.SetToolTip(fontButton, "Change font");
             
             // Add hover effects
             fontButton.MouseEnter += FontButton_MouseEnter;
@@ -392,6 +420,7 @@ namespace ModernTextViewer.src.Forms
 
             hyperlinkButton.FlatAppearance.BorderSize = 0;
             hyperlinkButton.Click += HyperlinkButton_Click;
+            buttonToolTip.SetToolTip(hyperlinkButton, "Add hyperlink");
             
             // Add hover effects
             hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
@@ -412,6 +441,7 @@ namespace ModernTextViewer.src.Forms
 
             themeToggleButton.FlatAppearance.BorderSize = 0;
             themeToggleButton.Click += ThemeToggleButton_Click;
+            buttonToolTip.SetToolTip(themeToggleButton, "Toggle dark/light mode");
             
             // Add hover effects
             themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
@@ -433,6 +463,7 @@ namespace ModernTextViewer.src.Forms
             saveButton.Click += SaveButton_Click;
             quickSaveButton.Click += QuickSaveButton_Click;
             
+            bottomToolbar.Controls.Add(openButton);
             bottomToolbar.Controls.Add(saveButton);
             bottomToolbar.Controls.Add(quickSaveButton);
             bottomToolbar.Controls.Add(fontButton);
@@ -578,6 +609,39 @@ namespace ModernTextViewer.src.Forms
             {
                 var rect = this.ClientRectangle;
                 e.Graphics.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
+            }
+        }
+
+        private async void OpenButton_Click(object? sender, EventArgs e)
+        {
+            try
+            {
+                var openDialog = new OpenFileDialog()
+                {
+                    Filter = "Text files (*.txt)|*.txt|Markdown files (*.md)|*.md|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
+                    FilterIndex = 1,
+                    Title = "Open File"
+                };
+                
+                if (openDialog.ShowDialog() == DialogResult.OK)
+                {
+                    var (content, hyperlinks) = await FileService.LoadFileAsync(openDialog.FileName);
+                    textBox.Text = content;
+                    document.FilePath = openDialog.FileName;
+                    document.Hyperlinks = hyperlinks;
+                    document.ResetDirty();
+                    UpdateHyperlinkRendering();
+                    
+                    // Start autosave immediately for existing files
+                    autoSaveTimer.Stop();
+                    autoSaveTimer.Start();
+                    autoSaveLabel.Text = $"Opened: {Path.GetFileName(openDialog.FileName)}";
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error opening file: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -862,12 +926,14 @@ namespace ModernTextViewer.src.Forms
             maximizeButton?.Dispose();
             minimizeButton?.Dispose();
             bottomToolbar?.Dispose();
+            openButton?.Dispose();
             saveButton?.Dispose();
             quickSaveButton?.Dispose();
             fontButton?.Dispose();
             hyperlinkButton?.Dispose();
             themeToggleButton?.Dispose();
             autoSaveLabel?.Dispose();
+            buttonToolTip?.Dispose();
         }
 
         partial void OnDisposing()
@@ -996,6 +1062,7 @@ namespace ModernTextViewer.src.Forms
             bottomToolbar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
             
             // Update buttons
+            openButton.ForeColor = isDarkMode ? Color.FromArgb(255, 200, 130) : Color.DarkOrange;
             saveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
             quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
             fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
