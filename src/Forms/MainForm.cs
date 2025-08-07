@@ -4,18 +4,22 @@ using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using ModernTextViewer.src.Services;
 using ModernTextViewer.src.Models;
+using ModernTextViewer.src.Controls;
 using System.Runtime.InteropServices.Marshalling;
 using System.Diagnostics;
 using System.IO;
 using System.Drawing.Text;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
 
 namespace ModernTextViewer.src.Forms
 {
     public partial class MainForm : Form
     {
-        private RichTextBox textBox = null!;
+        private VirtualTextBox textBox = null!;
         private Panel titleBar = null!;
         private Button closeButton = null!;
         private Button maximizeButton = null!;
@@ -36,29 +40,42 @@ namespace ModernTextViewer.src.Forms
         private float currentFontSize = 10f;
         private readonly DocumentModel document = new DocumentModel();
         private bool isDarkMode = true;  // Default to dark mode
-        private System.Windows.Forms.Timer autoSaveTimer;
+        private System.Windows.Forms.Timer autoSaveTimer = null!;
         private readonly Color darkBackColor = Color.FromArgb(30, 30, 30);
         private readonly Color darkForeColor = Color.FromArgb(220, 220, 220);
         private readonly Color darkToolbarColor = Color.FromArgb(45, 45, 45);
         private Label autoSaveLabel = null!;
         private FindReplaceDialog? findReplaceDialog;
         
-        // Undo/Redo state tracking
-        private class UndoState
-        {
-            public string Text { get; set; } = "";
-            public List<HyperlinkModel> Hyperlinks { get; set; } = new List<HyperlinkModel>();
-            public int SelectionStart { get; set; }
-            public int SelectionLength { get; set; }
-        }
-        
-        private Stack<UndoState> undoStack = new Stack<UndoState>();
-        private Stack<UndoState> redoStack = new Stack<UndoState>();
+        // Memory-efficient undo/redo system
+        private CircularUndoBuffer undoBuffer = null!;
         private bool isUndoRedoOperation = false;
-        private System.Windows.Forms.Timer hyperlinkUpdateTimer;
+        
+        // Font caching for memory efficiency (lazy-loaded)
+        private FontCache? fontCache;
+        
+        // Memory monitoring (lazy-loaded)
+        private MemoryPressureMonitor? memoryMonitor;
+        
+        // Lazy loading flags and performance tracking
+        private volatile bool isStartupComplete = false;
+        private volatile bool isFullyInitialized = false;
+        private readonly Stopwatch overallStartupTimer = Stopwatch.StartNew();
+        private System.Windows.Forms.Timer hyperlinkUpdateTimer = null!;
         private CancellationTokenSource? hyperlinkCancellationTokenSource;
         private readonly SemaphoreSlim hyperlinkUpdateSemaphore = new SemaphoreSlim(1, 1);
         private volatile bool isHyperlinkUpdateInProgress = false;
+        private int lastTimerIntervalTextLength = -1; // Track text length for timer interval optimization
+        private CancellationTokenSource? autoSaveCancellationTokenSource;
+        private CancellationTokenSource? themeRefreshCancellationTokenSource;
+        private volatile bool isThemeRefreshInProgress = false;
+        private readonly SemaphoreSlim themeRefreshSemaphore = new SemaphoreSlim(1, 1);
+
+        // Performance monitoring system
+        private PerformanceMonitor? performanceMonitor;
+        private PerformanceStatusBar? performanceStatusBar;
+        private PerformanceMetricsDialog? performanceDialog;
+        private Stopwatch frameTimer = new Stopwatch();
 
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
@@ -68,34 +85,546 @@ namespace ModernTextViewer.src.Forms
 
         public MainForm()
         {
-            try
+            ErrorManager.ExecuteWithErrorHandling(() =>
             {
+                // Measure startup performance
+                var startupTimer = Stopwatch.StartNew();
+                
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Info, 
+                    "Starting MainForm initialization");
+
+                // Set up critical error handling
+                ErrorManager.CriticalErrorOccurred += OnCriticalErrorOccurred;
+                ErrorManager.ErrorOccurred += OnErrorOccurred;
+                
+                // Only do minimal initialization in constructor
                 InitializeComponent();
                 
-                // Initialize timers
-                autoSaveTimer = new System.Windows.Forms.Timer
+                // Defer expensive initialization to Load event with error handling
+                this.Load += async (s, e) => await ErrorManager.ExecuteWithErrorHandlingAsync(async () =>
                 {
-                    Interval = 5 * 60 * 1000
-                };
-                autoSaveTimer.Tick += AutoSaveTimer_Tick;
+                    await MainForm_LoadAsync(s, e);
+                    return true;
+                }, ErrorManager.ErrorCategory.UI, "MainForm Load event", false);
                 
-                hyperlinkUpdateTimer = new System.Windows.Forms.Timer
+                this.Shown += async (s, e) => await ErrorManager.ExecuteWithErrorHandlingAsync(async () =>
                 {
-                    Interval = 250 // 250ms delay to debounce rapid typing
-                };
-                hyperlinkUpdateTimer.Tick += HyperlinkUpdateTimer_Tick;
+                    await MainForm_ShownAsync(s, e);
+                    return true;
+                }, ErrorManager.ErrorCategory.UI, "MainForm Shown event", false);
                 
-                InitializeUI();
+                // Initialize only critical UI elements synchronously
+                InitializeCriticalUI();
                 
-                autoSaveTimer.Start();
+                ErrorManager.LogError(ErrorManager.ErrorCategory.Performance, ErrorManager.ErrorSeverity.Info, 
+                    $"Constructor completed in {startupTimer.ElapsedMilliseconds}ms");
+            },
+            ErrorManager.ErrorCategory.UI,
+            "MainForm constructor",
+            fallbackAction: () =>
+            {
+                try
+                {
+                    // Minimal fallback initialization
+                    InitializeComponent();
+                    ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Critical, 
+                        "Using minimal fallback initialization");
+                }
+                catch (Exception criticalEx)
+                {
+                    ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Critical, 
+                        "Complete initialization failure", criticalEx);
+                    
+                    ErrorDialogService.ShowCriticalError(
+                        "Application Initialization Failed",
+                        "The application could not initialize properly. This may be due to system compatibility issues or corrupted installation.",
+                        "Please restart the application or reinstall if the problem persists.",
+                        requiresRestart: true);
+                    
+                    throw criticalEx;
+                }
+            });
+        }
+
+        private async Task MainForm_LoadAsync(object? sender, EventArgs e)
+        {
+            var loadTimer = Stopwatch.StartNew();
+            
+            await ErrorManager.ExecuteWithErrorHandlingAsync(async () =>
+            {
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Info, 
+                    "Starting MainForm load process");
+
+                // Initialize essential components first with error recovery
+                var essentialResult = await ErrorRecovery.RecoverUIOperation(
+                    async () => await InitializeEssentialComponentsAsync(),
+                    async () => 
+                    {
+                        // Fallback: minimal essential initialization
+                        ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Warning, 
+                            "Using fallback essential initialization");
+                        await InitializeMinimalEssentialComponentsAsync();
+                    },
+                    "Initialize essential components");
+
+                if (!essentialResult.Success)
+                {
+                    var ex = new InvalidOperationException($"Failed to initialize essential components: {essentialResult.ErrorMessage}");
+                    ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Critical, 
+                        "Critical failure in essential initialization", ex);
+                    throw ex;
+                }
+                
+                // Show window quickly
+                ErrorManager.ExecuteWithErrorHandling(() =>
+                {
+                    this.Show();
+                    this.Refresh();
+                }, ErrorManager.ErrorCategory.UI, "Show main window");
+                
+                // Continue initialization in background with comprehensive error handling
+                _ = Task.Run(async () =>
+                {
+                    await ErrorManager.ExecuteWithErrorHandlingAsync(async () =>
+                    {
+                        await CompleteInitializationAsync();
+                        
+                        BeginInvoke(new Action(() => ErrorManager.ExecuteWithErrorHandling(() =>
+                        {
+                            isFullyInitialized = true;
+                            overallStartupTimer.Stop();
+                            
+                            ErrorManager.LogError(ErrorManager.ErrorCategory.Performance, ErrorManager.ErrorSeverity.Info, 
+                                $"=== STARTUP PERFORMANCE REPORT ===\n" +
+                                $"Load event: {loadTimer.ElapsedMilliseconds}ms\n" +
+                                $"Total startup time: {overallStartupTimer.ElapsedMilliseconds}ms\n" +
+                                $"==================================");
+                            
+                            // Update status label safely
+                            if (autoSaveLabel != null && !autoSaveLabel.IsDisposed)
+                            {
+                                autoSaveLabel.Text = $"Ready ({overallStartupTimer.ElapsedMilliseconds}ms startup)";
+                            }
+                        }, ErrorManager.ErrorCategory.UI, "Finalize startup")));
+                        
+                        return true;
+                    },
+                    ErrorManager.ErrorCategory.UI,
+                    "Complete background initialization",
+                    false);
+                });
+                
+                ErrorManager.LogError(ErrorManager.ErrorCategory.Performance, ErrorManager.ErrorSeverity.Info, 
+                    $"Load event completed in {loadTimer.ElapsedMilliseconds}ms");
+                
+                return true;
+            },
+            ErrorManager.ErrorCategory.UI,
+            "MainForm load process",
+            false);
+        }
+
+        private async Task MainForm_ShownAsync(object? sender, EventArgs e)
+        {
+            await ErrorManager.ExecuteWithErrorHandlingAsync(async () =>
+            {
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Info, 
+                    "MainForm shown event triggered");
+                
+                isStartupComplete = true;
+                
+                // Perform any post-show initialization
+                await Task.Delay(100); // Small delay to ensure UI is fully rendered
+                
+                return true;
+            },
+            ErrorManager.ErrorCategory.UI,
+            "MainForm shown event",
+            false);
+        }
+
+        private void OnErrorOccurred(object? sender, ErrorManager.ErrorEventArgs e)
+        {
+            ErrorManager.ExecuteWithErrorHandling(() =>
+            {
+                // Only show dialogs for errors and higher severity
+                if (e.Error.Severity >= ErrorManager.ErrorSeverity.Error && e.CanRecover)
+                {
+                    // Show error dialog on UI thread
+                    if (InvokeRequired)
+                    {
+                        BeginInvoke(new Action(() => ShowErrorDialog(e)));
+                    }
+                    else
+                    {
+                        ShowErrorDialog(e);
+                    }
+                }
+            }, ErrorManager.ErrorCategory.UI, "Handle error event");
+        }
+
+        private void OnCriticalErrorOccurred(object? sender, ErrorManager.CriticalErrorEventArgs e)
+        {
+            ErrorManager.ExecuteWithErrorHandling(() =>
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(() => ShowCriticalErrorDialog(e)));
+                }
+                else
+                {
+                    ShowCriticalErrorDialog(e);
+                }
+            }, ErrorManager.ErrorCategory.UI, "Handle critical error event");
+        }
+
+        private void ShowErrorDialog(ErrorManager.ErrorEventArgs e)
+        {
+            var result = ErrorDialogService.ShowError(
+                "Application Error",
+                e.Error.Message,
+                e.Error.Severity,
+                e.SuggestedActions,
+                canRetry: e.CanRecover && e.Error.Category == ErrorManager.ErrorCategory.FileIO,
+                canIgnore: e.Error.Severity < ErrorManager.ErrorSeverity.Critical,
+                details: $"Category: {e.Error.Category}\nTime: {e.Error.Timestamp:HH:mm:ss}\n\n{e.Error.Details}\n\n{e.Error.StackTrace}",
+                parent: this);
+
+            if (result.Choice == ErrorDialogService.UserChoice.Retry && e.Error.Category == ErrorManager.ErrorCategory.FileIO)
+            {
+                // Implement retry logic based on the error context
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Info, 
+                    "User requested retry for error");
+            }
+        }
+
+        private void ShowCriticalErrorDialog(ErrorManager.CriticalErrorEventArgs e)
+        {
+            var result = ErrorDialogService.ShowCriticalError(
+                "Critical Application Error",
+                e.Error.Message,
+                e.RecoveryInstructions,
+                e.RequiresRestart,
+                $"Category: {e.Error.Category}\nTime: {e.Error.Timestamp:HH:mm:ss}\n\n{e.Error.Details}\n\n{e.Error.StackTrace}",
+                parent: this);
+
+            if (result.Choice == ErrorDialogService.UserChoice.SaveAndExit || e.RequiresRestart)
+            {
+                // Attempt emergency save and exit
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await PerformEmergencySaveAsync();
+                        await ErrorRecovery.TryRecoverFromCriticalErrorAsync(e.Error.Exception ?? new Exception(e.Error.Message), 
+                            e.Error.Context ?? "Unknown");
+                    }
+                    finally
+                    {
+                        BeginInvoke(new Action(() => Application.Exit()));
+                    }
+                });
+            }
+        }
+
+        private async Task PerformEmergencySaveAsync()
+        {
+            await ErrorManager.ExecuteWithErrorHandlingAsync(async () =>
+            {
+                if (document.IsDirty && !string.IsNullOrEmpty(document.CurrentFilePath))
+                {
+                    ErrorManager.LogError(ErrorManager.ErrorCategory.FileIO, ErrorManager.ErrorSeverity.Info, 
+                        "Attempting emergency save");
+                    
+                    var content = string.Empty;
+                    if (InvokeRequired)
+                    {
+                        Invoke(new Action(() => content = textBox.Text));
+                    }
+                    else
+                    {
+                        content = textBox.Text;
+                    }
+
+                    var emergencyPath = document.CurrentFilePath + ".emergency";
+                    await FileService.SaveFileAsync(emergencyPath, content, document.Hyperlinks);
+                    
+                    ErrorManager.LogError(ErrorManager.ErrorCategory.FileIO, ErrorManager.ErrorSeverity.Info, 
+                        $"Emergency save completed to: {emergencyPath}");
+                }
+                
+                return true;
+            },
+            ErrorManager.ErrorCategory.FileIO,
+            "Emergency save",
+            false);
+        }
+
+        private async Task InitializeMinimalEssentialComponentsAsync()
+        {
+            await Task.Run(() =>
+            {
+                // Minimal initialization that must succeed
+                if (autoSaveLabel == null)
+                {
+                    autoSaveLabel = new Label { Text = "Safe Mode", Dock = DockStyle.Right };
+                }
+                
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, ErrorManager.ErrorSeverity.Warning, 
+                    "Initialized minimal essential components - application in safe mode");
+            });
+        }
+        
+        private void MainForm_Shown(object? sender, EventArgs e)
+        {
+            var shownTimer = Stopwatch.StartNew();
+            
+            // Focus the text box once window is visible
+            textBox?.Focus();
+            textBox?.Refresh();
+            
+            isStartupComplete = true;
+            Debug.WriteLine($"Window shown in {shownTimer.ElapsedMilliseconds}ms");
+        }
+        
+        private void InitializeCriticalUI()
+        {
+            // Only set essential properties for quick window display
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.BackColor = isDarkMode ? darkBackColor : Color.White;
+            this.Padding = new Padding(3);
+            this.DoubleBuffered = true;
+            this.MinimumSize = new Size(200, 100);
+            
+            // Create minimal text box for immediate use
+            CreateBasicTextBox();
+        }
+        
+        private Task InitializeEssentialComponentsAsync()
+        {
+            // Initialize components needed for basic functionality
+            autoSaveLabel.Text = "📝 Loading interface...";
+            
+            InitializeTextBox();
+            InitializeTitleBar();
+            InitializeBasicToolbar();
+            
+            this.Controls.Add(titleBar);
+            this.LocationChanged += Form1_LocationChanged;
+            
+            autoSaveLabel.Text = "🔤 Loading fonts...";
+            
+            // Initialize font cache asynchronously
+            _ = Task.Run(() => GetFontCache());
+            
+            return Task.CompletedTask;
+        }
+        
+        private async Task CompleteInitializationAsync()
+        {
+            // Update status
+            BeginInvoke(() => autoSaveLabel.Text = "🧠 Loading memory systems...");
+            
+            // Initialize expensive components in background
+            await Task.Run(() =>
+            {
+                // Initialize performance monitoring system
+                performanceMonitor = new PerformanceMonitor();
+                performanceMonitor.PerformanceAlert += OnPerformanceAlert;
+                
+                // Set performance monitor for FileService
+                FileService.SetPerformanceMonitor(performanceMonitor);
+                
+                // Initialize memory-efficient undo buffer (50MB default, configurable)
+                undoBuffer = new CircularUndoBuffer(maxMemoryMB: 50);
+                
+                // Initialize memory monitoring
+                GetMemoryMonitor().Start();
+            });
+            
+            // Initialize timers on UI thread
+            BeginInvoke(new Action(() =>
+            {
+                autoSaveLabel.Text = "🔧 Finalizing setup...";
+                
+                InitializeTimers();
+                CompleteToolbarInitialization();
+                InitializeButtons();
+                
+                // Initialize performance status bar
+                if (performanceMonitor != null)
+                {
+                    InitializePerformanceStatusBar();
+                }
+                
+                bottomToolbar?.BringToFront();
+                titleBar?.BringToFront();
+                
+                // Start timers after full initialization
+                autoSaveTimer?.Start();
+            }));
+        }
+        
+        private void CreateBasicTextBox()
+        {
+            // Create minimal text box for immediate display
+            var textBoxContainer = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(1),
+                BackColor = isDarkMode ? darkBackColor : Color.White
+            };
+
+            var paddingPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(33, 5, 5, 5),
+                BackColor = isDarkMode ? darkBackColor : Color.White
+            };
+
+            textBox = new VirtualTextBox
+            {
+                Dock = DockStyle.Fill,
+                TextFont = new Font("Consolas", currentFontSize), // Use system font initially
+                BackColor = isDarkMode ? darkBackColor : Color.White,
+                ForeColor = isDarkMode ? darkForeColor : Color.Black,
+                TabStop = true,
+                Enabled = true
+            };
+            
+            paddingPanel.Controls.Add(textBox);
+            textBoxContainer.Controls.Add(paddingPanel);
+            this.Controls.Add(textBoxContainer);
+            textBoxContainer.SendToBack();
+            
+            textBox.Select();
+            lastTextContent = textBox.Text;
+        }
+        
+        private void InitializeTimers()
+        {
+            autoSaveTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 5 * 60 * 1000
+            };
+            autoSaveTimer.Tick += AutoSaveTimer_Tick;
+            
+            hyperlinkUpdateTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 250 // 250ms delay to debounce rapid typing
+            };
+            hyperlinkUpdateTimer.Tick += HyperlinkUpdateTimer_Tick;
+        }
+
+        private void InitializePerformanceStatusBar()
+        {
+            try
+            {
+                performanceStatusBar = new PerformanceStatusBar();
+                performanceStatusBar.ApplyTheme(isDarkMode);
+                performanceStatusBar.SetPerformanceMonitor(performanceMonitor);
+                performanceStatusBar.ShowDetailedMetrics += OnShowPerformanceDetails;
+                
+                // Add to form controls
+                this.Controls.Add(performanceStatusBar);
+                performanceStatusBar.BringToFront();
+                
+                ErrorManager.LogError(ErrorManager.ErrorCategory.Performance, 
+                    ErrorManager.ErrorSeverity.Info,
+                    "Performance status bar initialized successfully");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error initializing application: {ex.Message}", 
-                    "Initialization Error", 
-                    MessageBoxButtons.OK, 
-                    MessageBoxIcon.Error);
-                throw;
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, 
+                    ErrorManager.ErrorSeverity.Warning,
+                    "Failed to initialize performance status bar", ex);
+            }
+        }
+
+        private void OnPerformanceAlert(object? sender, PerformanceAlertEventArgs e)
+        {
+            try
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(() => OnPerformanceAlert(sender, e));
+                    return;
+                }
+
+                // Update status bar with alert
+                performanceStatusBar?.SetStatus($"⚠️ {e.AlertType}: {e.Message}", true);
+
+                // Log the alert
+                var severity = e.Severity switch
+                {
+                    AlertSeverity.Critical => ErrorManager.ErrorSeverity.Error,
+                    AlertSeverity.Warning => ErrorManager.ErrorSeverity.Warning,
+                    _ => ErrorManager.ErrorSeverity.Info
+                };
+
+                ErrorManager.LogError(ErrorManager.ErrorCategory.Performance, severity,
+                    $"Performance Alert: {e.AlertType} - {e.Message}");
+
+                // For critical alerts, consider showing a dialog
+                if (e.Severity == AlertSeverity.Critical)
+                {
+                    _ = Task.Run(() =>
+                    {
+                        BeginInvoke(() =>
+                        {
+                            var result = MessageBox.Show(
+                                $"Critical Performance Issue Detected:\n\n{e.Message}\n\nWould you like to view detailed performance metrics?",
+                                "Performance Alert",
+                                MessageBoxButtons.YesNo,
+                                MessageBoxIcon.Warning);
+
+                            if (result == DialogResult.Yes)
+                            {
+                                ShowPerformanceMetrics();
+                            }
+                        });
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, 
+                    ErrorManager.ErrorSeverity.Warning,
+                    "Error handling performance alert", ex);
+            }
+        }
+
+        private void OnShowPerformanceDetails(object? sender, EventArgs e)
+        {
+            ShowPerformanceMetrics();
+        }
+
+        private void ShowPerformanceMetrics()
+        {
+            try
+            {
+                if (performanceMonitor == null)
+                {
+                    MessageBox.Show("Performance monitoring is not available.", 
+                        "Performance Metrics", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                // Close existing dialog if open
+                performanceDialog?.Close();
+                performanceDialog?.Dispose();
+
+                // Create and show new dialog
+                performanceDialog = new PerformanceMetricsDialog(performanceMonitor, isDarkMode);
+                performanceDialog.Show(this);
+            }
+            catch (Exception ex)
+            {
+                ErrorManager.LogError(ErrorManager.ErrorCategory.UI, 
+                    ErrorManager.ErrorSeverity.Warning,
+                    "Error showing performance metrics dialog", ex);
+                MessageBox.Show("Failed to open performance metrics. Check the error log for details.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -182,7 +711,7 @@ namespace ModernTextViewer.src.Forms
                 FlatStyle = FlatStyle.Flat,
                 Dock = DockStyle.Top,
                 ForeColor = isDarkMode ? darkForeColor : Color.Gray,
-                Font = new Font("Arial", fontSize),
+                Font = GetFontCache().GetFont("Arial", fontSize),
                 Cursor = Cursors.Hand
             };
         }
@@ -203,21 +732,14 @@ namespace ModernTextViewer.src.Forms
                 BackColor = isDarkMode ? darkBackColor : Color.White
             };
 
-            textBox = new RichTextBox
+            textBox = new VirtualTextBox
             {
-                Multiline = true,
                 Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
-                Font = new Font("Consolas", currentFontSize),
-                WordWrap = true,
-                ScrollBars = RichTextBoxScrollBars.Vertical,
+                TextFont = GetFontCache().GetFont("Consolas", currentFontSize),
                 BackColor = isDarkMode ? darkBackColor : Color.White,
                 ForeColor = isDarkMode ? darkForeColor : Color.Black,
-                AllowDrop = true,
                 TabStop = true,
-                Enabled = true,
-                AcceptsTab = true,
-                DetectUrls = false
+                Enabled = true
             };
 
             // Handle line endings in KeyDown instead of KeyPress
@@ -239,17 +761,10 @@ namespace ModernTextViewer.src.Forms
 
             // Initialize context menu
             InitializeContextMenu();
-            textBox.ContextMenuStrip = textBoxContextMenu;
 
-            // Add event handlers
-            textBox.MouseWheel += TextBox_MouseWheel;
-            textBox.DragEnter += TextBox_DragEnter;
-            textBox.DragDrop += TextBox_DragDrop;
-            textBox.TextChanged += TextBox_TextChanged;
-            textBox.MouseClick += TextBox_MouseClick;
-            textBox.MouseMove += TextBox_MouseMove;
-            textBox.KeyDown += TextBox_KeyDown;
-            textBox.MouseDoubleClick += TextBox_MouseDoubleClick;
+            // Add VirtualTextBox event handlers
+            textBox.VirtualTextChanged += VirtualTextBox_TextChanged;
+            textBox.LoadProgressChanged += VirtualTextBox_LoadProgressChanged;
 
             // Set up control hierarchy
             paddingPanel.Controls.Add(textBox);
@@ -262,8 +777,16 @@ namespace ModernTextViewer.src.Forms
 
             textBoxContainer.SendToBack();
             
-            // Save initial state for undo
-            SaveUndoState();
+            // Save initial state for undo (deferred)
+            _ = Task.Run(() =>
+            {
+                // Wait for undo buffer to be initialized
+                while (undoBuffer == null && !isFullyInitialized)
+                {
+                    Thread.Sleep(10);
+                }
+                BeginInvoke(new Action(() => SaveUndoState()));
+            });
         }
 
         private void TextBox_MouseWheel(object? sender, MouseEventArgs e)
@@ -280,28 +803,44 @@ namespace ModernTextViewer.src.Forms
                     int selectionStart = textBox.SelectionStart;
                     int selectionLength = textBox.SelectionLength;
 
-                    if (selectionLength > 0)
+                    // Batch font changes to reduce UI blocking
+                    _ = Task.Run(async () =>
                     {
-                        // Preserve the style of each character in the selection
-                        for (int i = selectionStart; i < selectionStart + selectionLength; i++)
+                        await Task.Delay(1).ConfigureAwait(false); // Allow UI to remain responsive
+                        
+                        BeginInvoke(new Action(() =>
                         {
-                            textBox.Select(i, 1);
-                            Font currentCharFont = textBox.SelectionFont ?? textBox.Font;
-                            FontStyle currentStyle = currentCharFont.Style;
-                            using var newFont = new Font(currentCharFont.FontFamily, currentFontSize, currentStyle);
-                            textBox.SelectionFont = newFont;
-                        }
-                    }
-                    else
-                    {
-                        // Change entire textbox while preserving style
-                        FontStyle currentStyle = textBox.Font.Style;
-                        using var newFont = new Font(textBox.Font.FontFamily, currentFontSize, currentStyle);
-                        textBox.Font = newFont;
-                    }
+                            try
+                            {
+                                if (selectionLength > 0)
+                                {
+                                    // Preserve the style of each character in the selection
+                                    for (int i = selectionStart; i < selectionStart + selectionLength; i++)
+                                    {
+                                        textBox.Select(i, 1);
+                                        Font currentCharFont = textBox.SelectionFont ?? textBox.Font;
+                                        FontStyle currentStyle = currentCharFont.Style;
+                                        var newFont = GetFontCache().GetFont(currentCharFont.FontFamily.Name, currentFontSize, currentStyle);
+                                        textBox.SelectionFont = newFont;
+                                    }
+                                }
+                                else
+                                {
+                                    // Change entire textbox while preserving style
+                                    FontStyle currentStyle = textBox.TextFont.Style;
+                                    var newFont = GetFontCache().GetFont(textBox.TextFont.FontFamily.Name, currentFontSize, currentStyle);
+                                    textBox.TextFont = newFont;
+                                }
 
-                    // Restore the original selection
-                    textBox.Select(selectionStart, selectionLength);
+                                // Restore the original selection
+                                textBox.Select(selectionStart, selectionLength);
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"Error updating font size: {ex.Message}");
+                            }
+                        }));
+                    });
                 }
             }
         }
@@ -325,15 +864,40 @@ namespace ModernTextViewer.src.Forms
             }
         }
 
-        private void InitializeBottomToolbar()
+        private void InitializeBasicToolbar()
         {
+            // Create basic toolbar structure only
             bottomToolbar = new Panel
             {
                 Height = 30,
                 Dock = DockStyle.Bottom,
                 BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke
             };
-
+            
+            autoSaveLabel = new Label
+            {
+                Text = "⚡ Starting up...",
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleRight,
+                Padding = new Padding(5),
+                ForeColor = isDarkMode ? Color.FromArgb(255, 223, 100) : Color.DarkOrange
+            };
+            
+            bottomToolbar.Controls.Add(autoSaveLabel);
+            this.Controls.Add(bottomToolbar);
+        }
+        
+        private void CompleteToolbarInitialization()
+        {
+            // Add remaining toolbar buttons
+            CreateToolbarButtons();
+        }
+        
+        private void CreateToolbarButtons()
+        {
+            var fontCache = GetFontCache();
+            
             saveButton = new Button
             {
                 Text = "💾+",
@@ -341,7 +905,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Symbol", 12),
+                Font = GetFontCache().GetFont("Segoe UI Symbol", 12),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue
@@ -354,7 +918,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Symbol", 12),
+                Font = GetFontCache().GetFont("Segoe UI Symbol", 12),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green
@@ -367,7 +931,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                Font = GetFontCache().GetFont("Segoe UI", 12, FontStyle.Bold),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue
@@ -387,7 +951,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10),
+                Font = GetFontCache().GetFont("Segoe UI", 10),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue
@@ -407,7 +971,124 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10),
+                Font = GetFontCache().GetFont("Segoe UI", 10),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
+            };
+
+            themeToggleButton.FlatAppearance.BorderSize = 0;
+            themeToggleButton.Click += ThemeToggleButton_Click;
+            
+            // Add hover effects
+            themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
+            themeToggleButton.MouseLeave += ThemeToggleButton_MouseLeave;
+
+            saveButton.FlatAppearance.BorderSize = 0;
+            quickSaveButton.FlatAppearance.BorderSize = 0;
+            
+            saveButton.Click += SaveButton_Click;
+            quickSaveButton.Click += QuickSaveButton_Click;
+            
+            bottomToolbar.Controls.Add(saveButton);
+            bottomToolbar.Controls.Add(quickSaveButton);
+            bottomToolbar.Controls.Add(fontButton);
+            bottomToolbar.Controls.Add(hyperlinkButton);
+            bottomToolbar.Controls.Add(themeToggleButton);
+            
+            saveButton.MouseEnter += SaveButton_MouseEnter;
+            saveButton.MouseLeave += SaveButton_MouseLeave;
+
+            quickSaveButton.MouseEnter += QuickSaveButton_MouseEnter;
+            quickSaveButton.MouseLeave += QuickSaveButton_MouseLeave;
+            
+            // Update label
+            autoSaveLabel.Text = "Last autosave: Never";
+        }
+
+        private void InitializeBottomToolbar()
+        {
+            bottomToolbar = new Panel
+            {
+                Height = 30,
+                Dock = DockStyle.Bottom,
+                BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke
+            };
+
+            saveButton = new Button
+            {
+                Text = "💾+",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = GetFontCache().GetFont("Segoe UI Symbol", 12),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue
+            };
+
+            quickSaveButton = new Button
+            {
+                Text = "💾",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = GetFontCache().GetFont("Segoe UI Symbol", 12),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green
+            };
+
+            fontButton = new Button
+            {
+                Text = "A",
+                Width = 20,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = GetFontCache().GetFont("Segoe UI", 12, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue
+            };
+
+            fontButton.FlatAppearance.BorderSize = 0;
+            fontButton.Click += FontButton_Click;
+            
+            // Add hover effects
+            fontButton.MouseEnter += FontButton_MouseEnter;
+            fontButton.MouseLeave += FontButton_MouseLeave;
+
+            hyperlinkButton = new Button
+            {
+                Text = "🔗",
+                Width = 25,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = GetFontCache().GetFont("Segoe UI", 10),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue
+            };
+
+            hyperlinkButton.FlatAppearance.BorderSize = 0;
+            hyperlinkButton.Click += HyperlinkButton_Click;
+            
+            // Add hover effects
+            hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
+            hyperlinkButton.MouseLeave += HyperlinkButton_MouseLeave;
+
+            themeToggleButton = new Button
+            {
+                Text = isDarkMode ? "☀️" : "🌙",
+                Width = 25,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = GetFontCache().GetFont("Segoe UI", 10),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
@@ -576,12 +1257,17 @@ namespace ModernTextViewer.src.Forms
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            frameTimer.Restart();
+            
             base.OnPaint(e);
             using (var pen = new Pen(isDarkMode ? darkToolbarColor : Color.LightGray, 1))
             {
                 var rect = this.ClientRectangle;
                 e.Graphics.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
             }
+            
+            frameTimer.Stop();
+            performanceMonitor?.TrackUIFrameTime(frameTimer.Elapsed);
         }
 
         private async void SaveButton_Click(object? sender, EventArgs e)
@@ -596,7 +1282,7 @@ namespace ModernTextViewer.src.Forms
                 
                 if (saveDialog.ShowDialog() == DialogResult.OK)
                 {
-                    await FileService.SaveFileAsync(saveDialog.FileName, textBox.Text, document.Hyperlinks);
+                    await SaveFileAsync(saveDialog.FileName, textBox.Text, document.Hyperlinks);
                     document.FilePath = saveDialog.FileName;
                     document.ResetDirty();
                     autoSaveLabel.Text = $"Last save: {DateTime.Now.ToString("HH:mm:ss")}";
@@ -619,7 +1305,7 @@ namespace ModernTextViewer.src.Forms
 
             try
             {
-                await FileService.SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
+                await SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
                 document.ResetDirty();
                 autoSaveLabel.Text = $"Successfully saved: {DateTime.Now.ToString("HH:mm:ss")}";
             }
@@ -692,23 +1378,42 @@ namespace ModernTextViewer.src.Forms
                 newStyle = currentFont.Style | style;
             }
             
-            // Create and apply the new font with proper bold weight
-            if (style == FontStyle.Bold)
+            // For large selections, apply styling asynchronously to avoid UI blocking
+            if (selectionLength > 1000) // Only use async for large selections
             {
-                // For bold, create a new font with the Bold style
-                using var newFont = new Font(currentFont.FontFamily, currentFont.Size, newStyle);
-                textBox.SelectionFont = newFont;
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(1).ConfigureAwait(false); // Allow UI to remain responsive
+                    
+                    BeginInvoke(new Action(() =>
+                    {
+                        try
+                        {
+                            // Create and apply the new font
+                            var newFont = GetFontCache().GetFont(currentFont.FontFamily.Name, currentFont.Size, newStyle);
+                            textBox.SelectionFont = newFont;
+                            
+                            // Maintain the selection
+                            textBox.Select(selectionStart, selectionLength);
+                            textBox.Focus();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Error applying text style: {ex.Message}");
+                        }
+                    }));
+                });
             }
             else
             {
-                // For other styles, use the standard approach
-                using var newFont = new Font(currentFont.FontFamily, currentFont.Size, newStyle);
+                // For small selections, apply immediately
+                var newFont = GetFontCache().GetFont(currentFont.FontFamily.Name, currentFont.Size, newStyle);
                 textBox.SelectionFont = newFont;
+                
+                // Maintain the selection
+                textBox.Select(selectionStart, selectionLength);
+                textBox.Focus();
             }
-            
-            // Maintain the selection
-            textBox.Select(selectionStart, selectionLength);
-            textBox.Focus();
         }
 
         private void TextBox_DragEnter(object? sender, DragEventArgs e)
@@ -736,17 +1441,7 @@ namespace ModernTextViewer.src.Forms
             {
                 try
                 {
-                    var (content, hyperlinks) = await FileService.LoadFileAsync(files[0]);
-                    textBox.Text = content;
-                    document.FilePath = files[0];
-                    document.Hyperlinks = hyperlinks;
-                    document.ResetDirty();
-                    UpdateHyperlinkRendering();
-                    
-                    // Start autosave immediately for existing files
-                    autoSaveTimer.Stop(); // Reset the timer
-                    autoSaveTimer.Start(); // Start fresh countdown
-                    autoSaveLabel.Text = $"Autosave ready for: {Path.GetFileName(files[0])}";
+                    await LoadFileAsync(files[0]);
                 }
                 catch (Exception ex)
                 {
@@ -756,21 +1451,218 @@ namespace ModernTextViewer.src.Forms
             }
         }
 
+        private async Task LoadFileAsync(string filePath)
+        {
+            try
+            {
+                // Start performance monitoring for file load
+                performanceMonitor?.StartFileOperation("load", filePath, new FileInfo(filePath).Length);
+                performanceStatusBar?.SetOperationStatus("Loading file...");
+
+                // Check file size and show warning if needed
+                var loadChoice = await FileSizeWarningService.ShowFileSizeWarningAsync(this, filePath);
+                
+                if (loadChoice == FileLoadChoice.Cancel)
+                {
+                    performanceMonitor?.EndFileOperation("load", filePath, false, "User cancelled due to file size");
+                    performanceStatusBar?.ClearOperationStatus();
+                    return;
+                }
+
+                // Check if file should use streaming
+                var shouldUseStreaming = FileService.ShouldUseStreaming(filePath) || loadChoice == FileLoadChoice.LoadStreaming;
+                
+                if (shouldUseStreaming)
+                {
+                    // Enable streaming mode in document model
+                    var fileInfo = await FileService.AnalyzeFileForStreamingAsync(filePath);
+                    document.EnableStreamingMode(fileInfo);
+                    document.FilePath = filePath;
+                    
+                    // Load file using VirtualTextBox streaming
+                    performanceStatusBar?.SetOperationStatus("Loading file (streaming mode)...");
+                    await textBox.LoadFileAsync(filePath);
+                    
+                    // Update UI for streaming mode
+                    autoSaveLabel.Text = $"Large file loaded (streaming): {Path.GetFileName(filePath)}";
+                    performanceMonitor?.EndFileOperation("load", filePath, true);
+                }
+                else
+                {
+                    // Use regular loading for smaller files
+                    document.DisableStreamingMode();
+                    performanceStatusBar?.SetOperationStatus("Loading file (normal mode)...");
+                    var (content, hyperlinks) = await FileService.LoadFileAsync(filePath);
+                    textBox.Text = content;
+                    document.FilePath = filePath;
+                    document.Hyperlinks = hyperlinks;
+                    UpdateHyperlinkRendering();
+                    autoSaveLabel.Text = $"Autosave ready for: {Path.GetFileName(filePath)}";
+                    performanceMonitor?.EndFileOperation("load", filePath, true);
+                }
+                
+                document.ResetDirty();
+                performanceStatusBar?.ClearOperationStatus();
+                
+                // Start autosave timer
+                autoSaveTimer.Stop();
+                autoSaveTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                performanceMonitor?.EndFileOperation("load", filePath, false, ex.Message);
+                performanceStatusBar?.ClearOperationStatus();
+                MessageBox.Show($"Error loading file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async Task SaveFileAsync(string filePath, string content, List<HyperlinkModel>? hyperlinks)
+        {
+            try
+            {
+                // Start performance monitoring for save operation
+                var fileSize = content?.Length * sizeof(char) ?? 0;
+                performanceMonitor?.StartFileOperation("save", filePath, fileSize);
+                performanceStatusBar?.SetOperationStatus("Saving file...");
+
+                if (document.IsStreamingMode)
+                {
+                    await FileService.SaveStreamingFileAsync(filePath, content, hyperlinks);
+                }
+                else
+                {
+                    await FileService.SaveFileAsync(filePath, content, hyperlinks);
+                }
+
+                performanceMonitor?.EndFileOperation("save", filePath, true);
+            }
+            catch (Exception ex)
+            {
+                performanceMonitor?.EndFileOperation("save", filePath, false, ex.Message);
+                throw; // Re-throw to maintain existing error handling
+            }
+            finally
+            {
+                performanceStatusBar?.ClearOperationStatus();
+            }
+        }
+
+        private void VirtualTextBox_TextChanged(object? sender, VirtualTextBox.TextChangedEventArgs e)
+        {
+            // Update document model with changes
+            document.SetStreamingContent(e.NewText, true);
+            
+            // Update undo buffer if not already in undo/redo operation
+            if (!isUndoRedoOperation)
+            {
+                undoBuffer.SaveState(e.NewText, document.Hyperlinks, e.SelectionStart, e.SelectionLength);
+            }
+            
+            // Update last text content tracking
+            lastTextContent = e.NewText;
+            lastSelectionStart = e.SelectionStart;
+        }
+
+        private void VirtualTextBox_LoadProgressChanged(object? sender, VirtualTextBox.ProgressEventArgs e)
+        {
+            // Update UI with loading progress
+            autoSaveLabel.Text = $"{e.Status} - {e.PercentComplete}% complete";
+        }
+
         private async void AutoSaveTimer_Tick(object? sender, EventArgs e)
         {
             if (!string.IsNullOrEmpty(document.FilePath) && document.IsDirty)
             {
+                // Cancel any previous auto-save operation
+                autoSaveCancellationTokenSource?.Cancel();
+                autoSaveCancellationTokenSource = new CancellationTokenSource();
+                
                 try
                 {
-                    await FileService.SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
-                    document.ResetDirty();
-                    autoSaveLabel.Text = $"Last autosave: {DateTime.Now.ToString("HH:mm:ss")}";
+                    await PerformAutoSaveAsync(autoSaveCancellationTokenSource.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Auto-save was cancelled, this is expected
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"Autosave failed: {ex.Message}");
-                    autoSaveLabel.Text = $"Autosave failed: {DateTime.Now.ToString("HH:mm:ss")}";
+                    
+                    // Update UI on main thread
+                    if (InvokeRequired)
+                    {
+                        BeginInvoke(new Action(() => 
+                            autoSaveLabel.Text = $"Autosave failed: {DateTime.Now.ToString("HH:mm:ss")}"));
+                    }
+                    else
+                    {
+                        autoSaveLabel.Text = $"Autosave failed: {DateTime.Now.ToString("HH:mm:ss")}";
+                    }
                 }
+            }
+        }
+        
+        private async Task PerformAutoSaveAsync(CancellationToken cancellationToken)
+        {
+            // Capture current state on UI thread
+            string filePath;
+            string content;
+            List<HyperlinkModel> hyperlinks;
+            
+            if (InvokeRequired)
+            {
+                var tcs = new TaskCompletionSource<(string, string, List<HyperlinkModel>)>();
+                BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        tcs.SetResult((document.FilePath, textBox.Text, document.Hyperlinks.ToList()));
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.SetException(ex);
+                    }
+                }));
+                (filePath, content, hyperlinks) = await tcs.Task.ConfigureAwait(false);
+            }
+            else
+            {
+                filePath = document.FilePath;
+                content = textBox.Text;
+                hyperlinks = document.Hyperlinks.ToList();
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            // Perform file save on background thread
+            if (document.IsStreamingMode)
+            {
+                await FileService.SaveStreamingFileAsync(filePath, content, hyperlinks, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await FileService.SaveFileAsync(filePath, content, hyperlinks, cancellationToken).ConfigureAwait(false);
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            // Update UI on main thread
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        document.ResetDirty();
+                        autoSaveLabel.Text = $"Last autosave: {DateTime.Now.ToString("HH:mm:ss")}";
+                    }
+                }));
+            }
+            else
+            {
+                document.ResetDirty();
+                autoSaveLabel.Text = $"Last autosave: {DateTime.Now.ToString("HH:mm:ss")}";
             }
         }
 
@@ -840,7 +1732,7 @@ namespace ModernTextViewer.src.Forms
         {
             if (findReplaceDialog == null || findReplaceDialog.IsDisposed)
             {
-                findReplaceDialog = new FindReplaceDialog(textBox, isDarkMode);
+                findReplaceDialog = new FindReplaceDialog(textBox.GetUnderlyingRichTextBox(), isDarkMode);
                 findReplaceDialog.Owner = this;
             }
 
@@ -871,18 +1763,37 @@ namespace ModernTextViewer.src.Forms
             hyperlinkButton?.Dispose();
             themeToggleButton?.Dispose();
             autoSaveLabel?.Dispose();
+            
+            // Dispose memory management components
+            fontCache?.Dispose();
+            undoBuffer?.Dispose();
+            memoryMonitor?.Dispose();
+            
+            // Dispose performance monitoring components
+            performanceDialog?.Close();
+            performanceDialog?.Dispose();
+            performanceStatusBar?.Dispose();
+            performanceMonitor?.Dispose();
+            
+            // Dispose static font cache in HyperlinkService
+            HyperlinkService.DisposeFontCache();
         }
 
         partial void OnDisposing()
         {
             CleanupResources();
             
-            // Cancel any ongoing hyperlink processing
+            // Cancel any ongoing operations
+            autoSaveCancellationTokenSource?.Cancel();
+            autoSaveCancellationTokenSource?.Dispose();
+            themeRefreshCancellationTokenSource?.Cancel();
+            themeRefreshCancellationTokenSource?.Dispose();
             hyperlinkCancellationTokenSource?.Cancel();
             hyperlinkCancellationTokenSource?.Dispose();
             
-            // Dispose the semaphore
+            // Dispose the semaphores
             hyperlinkUpdateSemaphore?.Dispose();
+            themeRefreshSemaphore?.Dispose();
         }
 
         private void FontButton_Click(object? sender, EventArgs e)
@@ -923,15 +1834,15 @@ namespace ModernTextViewer.src.Forms
                     textBox.Select(i, 1);
                     Font currentCharFont = textBox.SelectionFont ?? textBox.Font;
                     FontStyle combinedStyle = newFont.Style | (currentCharFont.Style & ~FontStyle.Regular);
-                    var updatedFont = new Font(newFont.FontFamily, newFont.Size, combinedStyle);
+                    var updatedFont = GetFontCache().GetFont(newFont.FontFamily.Name, newFont.Size, combinedStyle);
                     textBox.SelectionFont = updatedFont;
                 }
             }
             else
             {
-                // Change the entire textbox font - create a new Font object to avoid reference issues
-                var appliedFont = new Font(newFont.FontFamily, newFont.Size, newFont.Style);
-                textBox.Font = appliedFont;
+                // Change the entire textbox font - use cached font for memory efficiency
+                var appliedFont = GetFontCache().GetFont(newFont.FontFamily.Name, newFont.Size, newFont.Style);
+                textBox.TextFont = appliedFont;
                 currentFontSize = newFont.Size;
                 
                 // Force refresh to ensure the change takes effect
@@ -944,10 +1855,11 @@ namespace ModernTextViewer.src.Forms
             textBox.Focus();
         }
 
-        private void ThemeToggleButton_Click(object? sender, EventArgs e)
+        private async void ThemeToggleButton_Click(object? sender, EventArgs e)
         {
             isDarkMode = !isDarkMode;
-            RefreshTheme();
+            performanceStatusBar?.ApplyTheme(isDarkMode);
+            await RefreshThemeAsync().ConfigureAwait(false);
         }
 
         private void UpdatePanelColors(Control parent)
@@ -963,103 +1875,211 @@ namespace ModernTextViewer.src.Forms
             }
         }
 
-        private void RefreshTheme()
+        private async Task RefreshThemeAsync()
         {
-            // Update form colors
-            this.BackColor = isDarkMode ? darkBackColor : Color.White;
-            
-            // Update all panels to prevent dark edges
-            UpdatePanelColors(this);
-            
-            // Update text box colors
-            textBox.BackColor = isDarkMode ? darkBackColor : Color.White;
-            textBox.ForeColor = isDarkMode ? darkForeColor : Color.Black;
-            
-            // Update all text to match theme (preserve hyperlink colors)
-            int selectionStart = textBox.SelectionStart;
-            int selectionLength = textBox.SelectionLength;
-            
-            // First, update hyperlink colors properly
-            foreach (var hyperlink in document.Hyperlinks)
+            // Prevent concurrent theme refresh operations
+            if (isThemeRefreshInProgress)
             {
-                textBox.Select(hyperlink.StartIndex, hyperlink.Length);
-                textBox.SelectionColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
+                return;
             }
             
-            // Then update non-hyperlink text
-            for (int i = 0; i < textBox.Text.Length; i++)
+            // Cancel any existing theme refresh
+            themeRefreshCancellationTokenSource?.Cancel();
+            themeRefreshCancellationTokenSource = new CancellationTokenSource();
+            var cancellationToken = themeRefreshCancellationTokenSource.Token;
+            
+            // Use semaphore to prevent multiple concurrent theme refreshes
+            if (!await themeRefreshSemaphore.WaitAsync(0, cancellationToken).ConfigureAwait(false))
             {
-                textBox.Select(i, 1);
-                var currentHyperlink = document.GetHyperlinkAtPosition(i);
+                return; // Another theme refresh is already in progress
+            }
+            
+            try
+            {
+                isThemeRefreshInProgress = true;
                 
-                // Only update if it's not part of a hyperlink
-                if (currentHyperlink == null)
+                // Capture current state for background processing
+                var currentIsDarkMode = isDarkMode;
+                var currentHyperlinks = document.Hyperlinks.ToList();
+                var currentText = textBox.Text;
+                var currentSelectionStart = textBox.SelectionStart;
+                var currentSelectionLength = textBox.SelectionLength;
+                
+                // Process text formatting in background
+                var formattingOperations = await Task.Run(() =>
                 {
-                    textBox.SelectionColor = isDarkMode ? darkForeColor : Color.Black;
-                }
-            }
-            
-            // Restore selection
-            textBox.Select(selectionStart, selectionLength);
-            
-            // Update bottom toolbar
-            bottomToolbar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
-            
-            // Update buttons
-            saveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
-            quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
-            fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
-            hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
-            
-            // Update theme toggle button
-            themeToggleButton.Text = isDarkMode ? "☀️" : "🌙";
-            themeToggleButton.ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200);
-            
-            // Update auto save label
-            autoSaveLabel.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
-            
-            // Update title bar
-            titleBar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
-            
-            // Update window control buttons
-            foreach (Button button in new[] { closeButton, maximizeButton, minimizeButton })
-            {
-                button.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
-                button.FlatAppearance.MouseOverBackColor = isDarkMode ? 
-                    Color.FromArgb(60, 60, 60) : Color.LightGray;
-                button.FlatAppearance.MouseDownBackColor = isDarkMode ? 
-                    Color.FromArgb(80, 80, 80) : Color.DarkGray;
-            }
-            
-            // Update hover effects
-            UpdateButtonHoverHandlers();
-            
-            // Update context menu
-            if (textBoxContextMenu != null)
-            {
-                if (isDarkMode)
+                    var operations = new List<HyperlinkService.FormattingOperation>();
+                    
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
+                    // Determine colors based on theme
+                    var hyperlinkColor = currentIsDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
+                    var defaultColor = currentIsDarkMode ? Color.FromArgb(220, 220, 220) : Color.Black;
+                    
+                    // Create operation to reset all text to default color
+                    if (currentText.Length > 0)
+                    {
+                        operations.Add(new HyperlinkService.FormattingOperation
+                        {
+                            StartIndex = 0,
+                            Length = currentText.Length,
+                            Color = defaultColor,
+                            IsUnderlined = false
+                        });
+                        
+                        // Add hyperlink formatting operations
+                        foreach (var hyperlink in currentHyperlinks)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            
+                            if (hyperlink.StartIndex >= 0 && hyperlink.EndIndex <= currentText.Length)
+                            {
+                                operations.Add(new HyperlinkService.FormattingOperation
+                                {
+                                    StartIndex = hyperlink.StartIndex,
+                                    Length = hyperlink.Length,
+                                    Color = hyperlinkColor,
+                                    IsUnderlined = true
+                                });
+                            }
+                        }
+                    }
+                    
+                    return operations;
+                }, cancellationToken).ConfigureAwait(true);
+                
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Apply UI changes on main thread
+                if (InvokeRequired)
                 {
-                    textBoxContextMenu.BackColor = darkToolbarColor;
-                    textBoxContextMenu.ForeColor = darkForeColor;
-                    textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+                    await Task.Factory.StartNew(() =>
+                    {
+                        Invoke(new Action(() => ApplyThemeChanges(formattingOperations, currentSelectionStart, currentSelectionLength, cancellationToken)));
+                    }, cancellationToken, TaskCreationOptions.None, TaskScheduler.Default).ConfigureAwait(false);
                 }
                 else
                 {
-                    textBoxContextMenu.BackColor = SystemColors.Control;
-                    textBoxContextMenu.ForeColor = SystemColors.ControlText;
-                    textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer();
+                    ApplyThemeChanges(formattingOperations, currentSelectionStart, currentSelectionLength, cancellationToken);
                 }
             }
-            
-            // Update find/replace dialog if it exists
-            if (findReplaceDialog != null && !findReplaceDialog.IsDisposed)
+            catch (OperationCanceledException)
             {
-                findReplaceDialog.Dispose();
-                findReplaceDialog = null;
+                // Expected when cancellation is requested - do nothing
             }
-            
-            // Refresh the form
-            this.Refresh();
+            catch (Exception ex)
+            {
+                // Log error but don't crash the application
+                Debug.WriteLine($"Error in theme refresh: {ex.Message}");
+            }
+            finally
+            {
+                isThemeRefreshInProgress = false;
+                themeRefreshSemaphore.Release();
+            }
+        }
+        
+        private void ApplyThemeChanges(List<HyperlinkService.FormattingOperation> formattingOperations, 
+            int savedSelectionStart, int savedSelectionLength, CancellationToken cancellationToken)
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Update form colors
+                this.BackColor = isDarkMode ? darkBackColor : Color.White;
+                
+                // Update all panels to prevent dark edges
+                UpdatePanelColors(this);
+                
+                // Update text box colors
+                textBox.BackColor = isDarkMode ? darkBackColor : Color.White;
+                textBox.ForeColor = isDarkMode ? darkForeColor : Color.Black;
+                
+                // Apply text formatting operations efficiently
+                if (formattingOperations.Count > 0)
+                {
+                    HyperlinkService.ApplyFormattingOperations(textBox.GetUnderlyingRichTextBox(), formattingOperations, textBox.TextFont);
+                }
+                
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Update bottom toolbar
+                bottomToolbar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
+                
+                // Update buttons
+                saveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue;
+                quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
+                fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
+                hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+                
+                // Update theme toggle button
+                themeToggleButton.Text = isDarkMode ? "☀️" : "🌙";
+                themeToggleButton.ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200);
+                
+                // Update auto save label
+                autoSaveLabel.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
+                
+                // Update title bar
+                titleBar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
+                
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Update window control buttons
+                foreach (Button button in new[] { closeButton, maximizeButton, minimizeButton })
+                {
+                    button.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
+                    button.FlatAppearance.MouseOverBackColor = isDarkMode ? 
+                        Color.FromArgb(60, 60, 60) : Color.LightGray;
+                    button.FlatAppearance.MouseDownBackColor = isDarkMode ? 
+                        Color.FromArgb(80, 80, 80) : Color.DarkGray;
+                }
+                
+                // Update hover effects
+                UpdateButtonHoverHandlers();
+                
+                // Update context menu
+                if (textBoxContextMenu != null)
+                {
+                    if (isDarkMode)
+                    {
+                        textBoxContextMenu.BackColor = darkToolbarColor;
+                        textBoxContextMenu.ForeColor = darkForeColor;
+                        textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+                    }
+                    else
+                    {
+                        textBoxContextMenu.BackColor = SystemColors.Control;
+                        textBoxContextMenu.ForeColor = SystemColors.ControlText;
+                        textBoxContextMenu.Renderer = new ToolStripProfessionalRenderer();
+                    }
+                }
+                
+                // Update find/replace dialog if it exists
+                if (findReplaceDialog != null && !findReplaceDialog.IsDisposed)
+                {
+                    findReplaceDialog.Dispose();
+                    findReplaceDialog = null;
+                }
+                
+                // Restore selection if still valid
+                if (savedSelectionStart >= 0 && savedSelectionStart <= textBox.TextLength)
+                {
+                    var safeSelectionLength = Math.Min(savedSelectionLength, textBox.TextLength - savedSelectionStart);
+                    textBox.Select(savedSelectionStart, Math.Max(0, safeSelectionLength));
+                }
+                
+                // Refresh the form
+                this.Refresh();
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation is requested
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error applying theme changes: {ex.Message}");
+            }
         }
 
         private void HyperlinkUpdateTimer_Tick(object? sender, EventArgs e)
@@ -1070,32 +2090,22 @@ namespace ModernTextViewer.src.Forms
 
         private void SaveUndoState()
         {
-            if (isUndoRedoOperation) return;
+            if (isUndoRedoOperation || undoBuffer == null) return;
             
-            var state = new UndoState
-            {
-                Text = textBox.Text,
-                Hyperlinks = document.Hyperlinks.Select(h => h.Clone()).ToList(),
-                SelectionStart = textBox.SelectionStart,
-                SelectionLength = textBox.SelectionLength
-            };
+            // Use efficient undo buffer with memory limits and diff-based storage
+            undoBuffer.SaveState(
+                textBox.Text,
+                document.Hyperlinks.Select(h => h.Clone()).ToList(),
+                textBox.SelectionStart,
+                textBox.SelectionLength
+            );
             
-            undoStack.Push(state);
-            redoStack.Clear(); // Clear redo stack when new action is performed
-            
-            // Limit undo stack size
-            while (undoStack.Count > 100)
-            {
-                var items = undoStack.ToArray();
-                undoStack.Clear();
-                for (int i = 0; i < items.Length - 1; i++)
-                {
-                    undoStack.Push(items[i]);
-                }
-            }
+            // Monitor memory usage (deferred if not yet initialized)
+            var monitor = GetMemoryMonitor();
+            _ = Task.Run(() => monitor.CheckMemoryPressure());
         }
 
-        private void RestoreState(UndoState state)
+        private void RestoreState(UndoBuffer.UndoState state)
         {
             isUndoRedoOperation = true;
             try
@@ -1124,36 +2134,18 @@ namespace ModernTextViewer.src.Forms
 
         private void PerformUndo()
         {
-            if (undoStack.Count > 1) // Keep at least one state
+            var undoState = undoBuffer.Undo();
+            if (undoState != null)
             {
-                // Save current state to redo stack
-                var currentState = new UndoState
-                {
-                    Text = textBox.Text,
-                    Hyperlinks = document.Hyperlinks.Select(h => h.Clone()).ToList(),
-                    SelectionStart = textBox.SelectionStart,
-                    SelectionLength = textBox.SelectionLength
-                };
-                redoStack.Push(currentState);
-                
-                // Pop current state and restore previous
-                undoStack.Pop();
-                if (undoStack.Count > 0)
-                {
-                    RestoreState(undoStack.Peek());
-                }
+                RestoreState(undoState);
             }
         }
 
         private void PerformRedo()
         {
-            if (redoStack.Count > 0)
+            var redoState = undoBuffer.Redo();
+            if (redoState != null)
             {
-                // Save current state to undo stack
-                SaveUndoState();
-                
-                // Restore state from redo stack
-                var redoState = redoStack.Pop();
                 RestoreState(redoState);
             }
         }
@@ -1569,6 +2561,7 @@ namespace ModernTextViewer.src.Forms
                 if (needsHyperlinkUpdate)
                 {
                     hyperlinkUpdateTimer.Stop();
+                    UpdateHyperlinkTimerInterval(); // Adjust timer delay based on document size
                     hyperlinkUpdateTimer.Start();
                 }
             }
@@ -1624,16 +2617,16 @@ namespace ModernTextViewer.src.Forms
                 
                 cancellationToken.ThrowIfCancellationRequested();
                 
-                // Apply formatting on UI thread
+                // Apply formatting on UI thread using BeginInvoke for non-blocking operation
                 if (InvokeRequired)
                 {
-                    Invoke(new Action(() =>
+                    BeginInvoke(new Action(() =>
                     {
                         try
                         {
                             if (!cancellationToken.IsCancellationRequested)
                             {
-                                HyperlinkService.ApplyFormattingOperations(textBox, formattingOperations, currentFont);
+                                HyperlinkService.ApplyFormattingOperations(textBox.GetUnderlyingRichTextBox(), formattingOperations, currentFont);
                             }
                         }
                         catch (OperationCanceledException)
@@ -1649,7 +2642,7 @@ namespace ModernTextViewer.src.Forms
                 }
                 else
                 {
-                    HyperlinkService.ApplyFormattingOperations(textBox, formattingOperations, currentFont);
+                    HyperlinkService.ApplyFormattingOperations(textBox.GetUnderlyingRichTextBox(), formattingOperations, currentFont);
                 }
             }
             catch (OperationCanceledException)
@@ -1665,6 +2658,51 @@ namespace ModernTextViewer.src.Forms
             {
                 isHyperlinkUpdateInProgress = false;
                 hyperlinkUpdateSemaphore.Release();
+            }
+        }
+
+        /// <summary>
+        /// Adjusts hyperlink update timer delay based on document size for optimal performance
+        /// </summary>
+        private void UpdateHyperlinkTimerInterval()
+        {
+            int textLength = textBox?.Text?.Length ?? 0;
+            
+            // Skip if text length hasn't changed significantly (within 10% or 5000 characters)
+            if (lastTimerIntervalTextLength >= 0)
+            {
+                int lengthDiff = Math.Abs(textLength - lastTimerIntervalTextLength);
+                int threshold = Math.Max(5000, lastTimerIntervalTextLength / 10);
+                if (lengthDiff < threshold)
+                {
+                    return; // No significant change, keep current interval
+                }
+            }
+            
+            int newInterval;
+            
+            if (textLength > 250000) // Very large documents (>250KB)
+            {
+                newInterval = 1000; // 1 second delay
+            }
+            else if (textLength > 100000) // Large documents (>100KB)
+            {
+                newInterval = 750; // 750ms delay
+            }
+            else if (textLength > 50000) // Medium documents (>50KB)
+            {
+                newInterval = 500; // 500ms delay
+            }
+            else
+            {
+                newInterval = 250; // Default 250ms delay for small documents
+            }
+            
+            // Only update if interval changed to avoid unnecessary timer restarts
+            if (hyperlinkUpdateTimer.Interval != newInterval)
+            {
+                hyperlinkUpdateTimer.Interval = newInterval;
+                lastTimerIntervalTextLength = textLength; // Update tracked length
             }
         }
 
@@ -1703,6 +2741,36 @@ namespace ModernTextViewer.src.Forms
             }
 
             HyperlinkService.SetClipboardWithHyperlinks(selectedText, selectedHyperlinks);
+        }
+
+        /// <summary>
+        /// Lazy-loaded FontCache getter with thread safety
+        /// </summary>
+        private FontCache GetFontCache()
+        {
+            if (fontCache == null)
+            {
+                lock (this)
+                {
+                    fontCache ??= new FontCache();
+                }
+            }
+            return fontCache;
+        }
+        
+        /// <summary>
+        /// Lazy-loaded MemoryPressureMonitor getter with thread safety
+        /// </summary>
+        private MemoryPressureMonitor GetMemoryMonitor()
+        {
+            if (memoryMonitor == null)
+            {
+                lock (this)
+                {
+                    memoryMonitor ??= new MemoryPressureMonitor();
+                }
+            }
+            return memoryMonitor;
         }
 
         private class DarkColorTable : ProfessionalColorTable

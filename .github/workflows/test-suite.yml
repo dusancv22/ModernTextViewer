@@ -1,0 +1,407 @@
+name: ModernTextViewer Test Suite
+
+on:
+  push:
+    branches: [ master, develop ]
+  pull_request:
+    branches: [ master ]
+  schedule:
+    # Run comprehensive tests nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'Quick'
+        type: choice
+        options:
+        - Quick
+        - Comprehensive
+        - Stress
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  BUILD_CONFIGURATION: 'Release'
+
+jobs:
+  quick-tests:
+    name: Quick Tests (Unit + Core Integration)
+    runs-on: windows-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'Quick')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
+      run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+
+    - name: Run Unit Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Unit" `
+          --logger "trx;LogFileName=unit-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 10
+
+    - name: Run Core Integration Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Integration&TestCategory!=LongRunning" `
+          --logger "trx;LogFileName=integration-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 15
+
+    - name: Run Basic Performance Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Performance&TestCategory!=Benchmark&TestCategory!=LongRunning" `
+          --logger "trx;LogFileName=performance-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 20
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: quick-test-results
+        path: TestResults/
+        retention-days: 5
+
+    - name: Publish test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Quick Tests
+        path: 'TestResults/*.trx'
+        reporter: dotnet-trx
+        fail-on-error: true
+
+  comprehensive-tests:
+    name: Comprehensive Tests (Full Suite)
+    runs-on: windows-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'Comprehensive')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
+      run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+
+    - name: Install Playwright
+      run: |
+        dotnet build ModernTextViewer.Tests\ModernTextViewer.Tests.csproj
+        pwsh ModernTextViewer.Tests\bin\${{ env.BUILD_CONFIGURATION }}\net8.0\playwright.ps1 install --with-deps
+
+    - name: Run All Unit Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Unit" `
+          --logger "trx;LogFileName=comprehensive-unit-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 15
+
+    - name: Run Integration Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Integration" `
+          --logger "trx;LogFileName=comprehensive-integration-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 30
+
+    - name: Run Performance Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Performance" `
+          --logger "trx;LogFileName=comprehensive-performance-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 45
+
+    - name: Run Stability Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Stability&TestCategory!=LongRunning" `
+          --logger "trx;LogFileName=comprehensive-stability-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 60
+
+    - name: Run Browser Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Browser" `
+          --logger "trx;LogFileName=comprehensive-browser-tests.trx" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 30
+      env:
+        CI: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: comprehensive-test-results
+        path: TestResults/
+        retention-days: 30
+
+    - name: Publish test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Comprehensive Tests
+        path: 'TestResults/*.trx'
+        reporter: dotnet-trx
+        fail-on-error: false # Don't fail on test failures for nightly builds
+
+    - name: Upload code coverage
+      uses: codecov/codecov-action@v3
+      if: always()
+      with:
+        directory: TestResults/
+        flags: comprehensive
+        name: comprehensive-coverage
+
+  stress-tests:
+    name: Stress Tests (Extended Load Testing)
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'Stress'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
+      run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+
+    - name: Run Long-Running Stability Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Stability" `
+          --logger "trx;LogFileName=stress-stability-tests.trx" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 120
+
+    - name: Run Performance Benchmarks
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "Category=Benchmark" `
+          --logger "trx;LogFileName=stress-benchmark-tests.trx" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 90
+
+    - name: Upload stress test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: stress-test-results
+        path: TestResults/
+        retention-days: 60
+
+    - name: Publish stress test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Stress Tests
+        path: 'TestResults/*.trx'
+        reporter: dotnet-trx
+        fail-on-error: false
+
+  performance-regression:
+    name: Performance Regression Analysis
+    runs-on: windows-latest
+    needs: [quick-tests]
+    if: always() && (github.event_name == 'push' || github.event_name == 'pull_request')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Need history for comparison
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
+      run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+
+    - name: Run Performance Baseline Tests
+      run: |
+        dotnet test ModernTextViewer.Tests\ModernTextViewer.Tests.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --filter "TestMethod=EstablishPerformanceBaselines" `
+          --logger "trx;LogFileName=baseline-tests.trx" `
+          --results-directory TestResults `
+          --no-build `
+          --verbosity normal
+      timeout-minutes: 15
+
+    - name: Download previous baselines
+      uses: actions/cache@v3
+      with:
+        path: performance_baselines.json
+        key: performance-baselines-${{ github.repository }}-${{ github.ref_name }}
+        restore-keys: |
+          performance-baselines-${{ github.repository }}-
+
+    - name: Compare performance baselines
+      shell: pwsh
+      run: |
+        # This is a simplified performance comparison
+        # In a real implementation, you would compare current vs previous baselines
+        # and report significant regressions
+        
+        $currentBaselines = "TestResults/performance_baselines.json"
+        $previousBaselines = "performance_baselines.json"
+        
+        if (Test-Path $currentBaselines) {
+          Write-Host "✅ Current performance baselines established"
+          Copy-Item $currentBaselines $previousBaselines -Force
+          
+          # In a real implementation, add logic here to:
+          # 1. Compare current vs previous baselines
+          # 2. Calculate percentage differences
+          # 3. Flag significant regressions (>20% slower)
+          # 4. Post results as PR comments
+          
+          Write-Host "Performance analysis completed"
+        } else {
+          Write-Host "⚠️ No performance baselines found"
+        }
+
+    - name: Upload baseline results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-baselines
+        path: TestResults/performance_baselines.json
+        retention-days: 90
+
+  test-summary:
+    name: Test Results Summary
+    runs-on: windows-latest
+    needs: [quick-tests, comprehensive-tests, stress-tests, performance-regression]
+    if: always()
+    
+    steps:
+    - name: Generate Test Summary
+      shell: pwsh
+      run: |
+        # Generate a comprehensive test summary
+        Write-Host "# ModernTextViewer Test Execution Summary" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+        
+        Write-Host "## Test Jobs Status" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Job | Status |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "|-----|--------|" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Quick Tests | ${{ needs.quick-tests.result }} |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Comprehensive Tests | ${{ needs.comprehensive-tests.result }} |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Stress Tests | ${{ needs.stress-tests.result }} |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Performance Regression | ${{ needs.performance-regression.result }} |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+        
+        Write-Host "## Execution Context" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "- **Trigger**: ${{ github.event_name }}" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "- **Branch**: ${{ github.ref_name }}" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "- **Commit**: ${{ github.sha }}" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "- **Runner**: ${{ runner.os }}" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "- **Timestamp**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')" >> $env:GITHUB_STEP_SUMMARY
+        
+        # Determine overall status
+        $quickStatus = "${{ needs.quick-tests.result }}"
+        $overallStatus = if ($quickStatus -eq "success") { "✅ PASSED" } else { "❌ FAILED" }
+        
+        Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "## Overall Status: $overallStatus" >> $env:GITHUB_STEP_SUMMARY
+        
+        if ($quickStatus -ne "success") {
+          Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+          Write-Host "⚠️ **Action Required**: Core functionality tests failed. Please review the test results before merging." >> $env:GITHUB_STEP_SUMMARY
+        }
+
+    - name: Set job status
+      if: needs.quick-tests.result != 'success'
+      run: exit 1

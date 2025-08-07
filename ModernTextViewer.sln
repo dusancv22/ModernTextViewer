@@ -5,6 +5,8 @@ VisualStudioVersion = 17.11.35327.3
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModernTextViewer", "ModernTextViewer.csproj", "{14F7E71F-5615-42D4-921E-45FA3DF8BA86}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModernTextViewer.Tests", "ModernTextViewer.Tests\ModernTextViewer.Tests.csproj", "{2A8B9C3D-4E5F-6789-ABCD-123456789ABC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{14F7E71F-5615-42D4-921E-45FA3DF8BA86}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{14F7E71F-5615-42D4-921E-45FA3DF8BA86}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{14F7E71F-5615-42D4-921E-45FA3DF8BA86}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2A8B9C3D-4E5F-6789-ABCD-123456789ABC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2A8B9C3D-4E5F-6789-ABCD-123456789ABC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2A8B9C3D-4E5F-6789-ABCD-123456789ABC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2A8B9C3D-4E5F-6789-ABCD-123456789ABC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

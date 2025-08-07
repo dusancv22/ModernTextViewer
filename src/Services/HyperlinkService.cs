@@ -21,11 +21,17 @@ namespace ModernTextViewer.src.Services
         // Background processing constants
         private const int CHUNK_SIZE = 1000; // Process text in chunks of 1000 characters
         private const int DEBOUNCE_DELAY_MS = 300; // Wait 300ms before processing changes
+        private const int FORMATTING_BATCH_SIZE = 50; // Apply formatting in batches of 50 operations
+        private const int LARGE_DOCUMENT_THRESHOLD = 50000; // Consider documents over 50KB as large
         
         // Windows API for controlling text redraw
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
         private const int WM_SETREDRAW = 0x000B;
+        
+        // Static font cache for HyperlinkService to prevent memory leaks
+        private static FontCache? staticFontCache;
+        private static readonly object fontCacheLock = new object();
         
         public static string GenerateRtfWithHyperlinks(string text, List<HyperlinkModel> hyperlinks)
         {
@@ -295,39 +301,129 @@ namespace ModernTextViewer.src.Services
                 var hyperlinkColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
                 var defaultColor = isDarkMode ? Color.FromArgb(220, 220, 220) : Color.Black;
                 
-                // Process text in chunks to improve responsiveness
                 var textLength = text.Length;
                 var validHyperlinks = hyperlinks
                     .Where(h => h.StartIndex >= 0 && h.EndIndex <= textLength)
                     .OrderBy(h => h.StartIndex)
                     .ToList();
                 
-                // First, create operation to reset all text to default formatting
-                operations.Add(new FormattingOperation
+                // For large documents, process in chunks to improve responsiveness
+                if (textLength > LARGE_DOCUMENT_THRESHOLD)
                 {
-                    StartIndex = 0,
-                    Length = textLength,
-                    Color = defaultColor,
-                    IsUnderlined = false
-                });
-                
-                // Then add hyperlink formatting operations
-                foreach (var hyperlink in validHyperlinks)
+                    ProcessLargeDocumentHyperlinks(operations, text, validHyperlinks, 
+                        hyperlinkColor, defaultColor, cancellationToken);
+                }
+                else
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    
-                    operations.Add(new FormattingOperation
-                    {
-                        StartIndex = hyperlink.StartIndex,
-                        Length = hyperlink.Length,
-                        Color = hyperlinkColor,
-                        IsUnderlined = true
-                    });
+                    ProcessRegularDocumentHyperlinks(operations, textLength, validHyperlinks, 
+                        hyperlinkColor, defaultColor, cancellationToken);
                 }
                 
             }, cancellationToken).ConfigureAwait(false);
             
             return operations;
+        }
+        
+        /// <summary>
+        /// Processes hyperlinks for large documents using chunked approach
+        /// </summary>
+        private static void ProcessLargeDocumentHyperlinks(
+            List<FormattingOperation> operations,
+            string text,
+            List<HyperlinkModel> validHyperlinks,
+            Color hyperlinkColor,
+            Color defaultColor,
+            CancellationToken cancellationToken)
+        {
+            var textLength = text.Length;
+            
+            // Process text in chunks for large documents
+            var chunkSize = Math.Max(CHUNK_SIZE, textLength / 20); // Adaptive chunk size
+            
+            for (int chunkStart = 0; chunkStart < textLength; chunkStart += chunkSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                var chunkEnd = Math.Min(chunkStart + chunkSize, textLength);
+                var chunkLength = chunkEnd - chunkStart;
+                
+                // Reset chunk to default formatting
+                operations.Add(new FormattingOperation
+                {
+                    StartIndex = chunkStart,
+                    Length = chunkLength,
+                    Color = defaultColor,
+                    IsUnderlined = false
+                });
+                
+                // Find hyperlinks that intersect with this chunk
+                var chunkHyperlinks = validHyperlinks
+                    .Where(h => h.StartIndex < chunkEnd && h.EndIndex > chunkStart)
+                    .ToList();
+                
+                // Process hyperlinks in this chunk
+                foreach (var hyperlink in chunkHyperlinks)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
+                    // Calculate intersection with chunk
+                    var intersectionStart = Math.Max(hyperlink.StartIndex, chunkStart);
+                    var intersectionEnd = Math.Min(hyperlink.EndIndex, chunkEnd);
+                    var intersectionLength = intersectionEnd - intersectionStart;
+                    
+                    if (intersectionLength > 0)
+                    {
+                        operations.Add(new FormattingOperation
+                        {
+                            StartIndex = intersectionStart,
+                            Length = intersectionLength,
+                            Color = hyperlinkColor,
+                            IsUnderlined = true
+                        });
+                    }
+                }
+                
+                // Add small delay between chunks for very large documents to keep UI responsive
+                if (textLength > LARGE_DOCUMENT_THRESHOLD * 5 && chunkStart + chunkSize < textLength)
+                {
+                    Task.Delay(1, cancellationToken).ConfigureAwait(false).GetAwaiter().GetResult();
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Processes hyperlinks for regular-sized documents
+        /// </summary>
+        private static void ProcessRegularDocumentHyperlinks(
+            List<FormattingOperation> operations,
+            int textLength,
+            List<HyperlinkModel> validHyperlinks,
+            Color hyperlinkColor,
+            Color defaultColor,
+            CancellationToken cancellationToken)
+        {
+            // First, create operation to reset all text to default formatting
+            operations.Add(new FormattingOperation
+            {
+                StartIndex = 0,
+                Length = textLength,
+                Color = defaultColor,
+                IsUnderlined = false
+            });
+            
+            // Then add hyperlink formatting operations
+            foreach (var hyperlink in validHyperlinks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                operations.Add(new FormattingOperation
+                {
+                    StartIndex = hyperlink.StartIndex,
+                    Length = hyperlink.Length,
+                    Color = hyperlinkColor,
+                    IsUnderlined = true
+                });
+            }
         }
         
         /// <summary>
@@ -345,50 +441,123 @@ namespace ModernTextViewer.src.Services
             int savedSelectionStart = textBox.SelectionStart;
             int savedSelectionLength = textBox.SelectionLength;
             
+            // Use static font cache for memory efficiency
+            var fontCache = GetOrCreateFontCache();
+            Font normalFont = baseFont;
+            Font underlineFont = fontCache.GetFont(baseFont.FontFamily.Name, baseFont.Size, baseFont.Style | FontStyle.Underline);
+            
             try
             {
                 // Disable redraw during formatting to prevent flicker
                 SendMessage(textBox.Handle, WM_SETREDRAW, 0, 0);
                 
-                // Apply formatting operations in batches
-                foreach (var operation in operations)
-                {
-                    if (operation.StartIndex >= 0 && operation.StartIndex < textBox.TextLength &&
-                        operation.Length > 0 && operation.StartIndex + operation.Length <= textBox.TextLength)
-                    {
-                        textBox.Select(operation.StartIndex, operation.Length);
-                        
-                        // Apply color if specified
-                        if (operation.Color.HasValue)
-                        {
-                            textBox.SelectionColor = operation.Color.Value;
-                        }
-                        
-                        // Apply underline if specified
-                        if (operation.IsUnderlined.HasValue)
-                        {
-                            var currentFont = textBox.SelectionFont ?? baseFont;
-                            var newStyle = operation.IsUnderlined.Value 
-                                ? currentFont.Style | FontStyle.Underline
-                                : currentFont.Style & ~FontStyle.Underline;
-                            
-                            if (currentFont.Style != newStyle)
-                            {
-                                using var newFont = new Font(currentFont, newStyle);
-                                textBox.SelectionFont = newFont;
-                            }
-                        }
-                    }
-                }
+                // Apply formatting operations in batches to improve performance
+                ApplyFormattingBatches(textBox, operations, normalFont, underlineFont);
             }
             finally
             {
                 // Restore original selection
-                textBox.Select(savedSelectionStart, savedSelectionLength);
+                if (savedSelectionStart >= 0 && savedSelectionStart <= textBox.TextLength)
+                {
+                    var safeSelectionLength = Math.Min(savedSelectionLength, textBox.TextLength - savedSelectionStart);
+                    textBox.Select(savedSelectionStart, Math.Max(0, safeSelectionLength));
+                }
                 
                 // Re-enable drawing
                 SendMessage(textBox.Handle, WM_SETREDRAW, 1, 0);
                 textBox.Invalidate();
+            }
+        }
+        
+        /// <summary>
+        /// Applies formatting operations in batches for better performance
+        /// </summary>
+        private static void ApplyFormattingBatches(RichTextBox textBox, List<FormattingOperation> operations, Font normalFont, Font underlineFont)
+        {
+            var totalOperations = operations.Count;
+            
+            // Process operations in batches to prevent UI blocking
+            for (int batchStart = 0; batchStart < totalOperations; batchStart += FORMATTING_BATCH_SIZE)
+            {
+                var batchEnd = Math.Min(batchStart + FORMATTING_BATCH_SIZE, totalOperations);
+                
+                // Process current batch
+                for (int i = batchStart; i < batchEnd; i++)
+                {
+                    var operation = operations[i];
+                    
+                    if (IsValidOperation(operation, textBox))
+                    {
+                        ApplySingleFormattingOperation(textBox, operation, normalFont, underlineFont);
+                    }
+                }
+                
+                // Allow UI to remain responsive during large formatting operations
+                if (batchEnd < totalOperations && totalOperations > FORMATTING_BATCH_SIZE * 2)
+                {
+                    // Force a brief UI update between batches
+                    Application.DoEvents();
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Validates if a formatting operation is safe to apply
+        /// </summary>
+        private static bool IsValidOperation(FormattingOperation operation, RichTextBox textBox)
+        {
+            return operation != null &&
+                   operation.StartIndex >= 0 && 
+                   operation.StartIndex < textBox.TextLength &&
+                   operation.Length > 0 && 
+                   operation.StartIndex + operation.Length <= textBox.TextLength;
+        }
+        
+        /// <summary>
+        /// Applies a single formatting operation efficiently
+        /// </summary>
+        private static void ApplySingleFormattingOperation(RichTextBox textBox, FormattingOperation operation, Font normalFont, Font underlineFont)
+        {
+            textBox.Select(operation.StartIndex, operation.Length);
+            
+            // Apply color if specified
+            if (operation.Color.HasValue)
+            {
+                textBox.SelectionColor = operation.Color.Value;
+            }
+            
+            // Apply font styling if specified
+            if (operation.IsUnderlined.HasValue)
+            {
+                // Use pre-created fonts for better performance
+                textBox.SelectionFont = operation.IsUnderlined.Value ? underlineFont : normalFont;
+            }
+        }
+        
+        /// <summary>
+        /// Gets or creates the static font cache for HyperlinkService
+        /// </summary>
+        private static FontCache GetOrCreateFontCache()
+        {
+            if (staticFontCache == null)
+            {
+                lock (fontCacheLock)
+                {
+                    staticFontCache ??= new FontCache();
+                }
+            }
+            return staticFontCache;
+        }
+        
+        /// <summary>
+        /// Disposes the static font cache (should be called on application shutdown)
+        /// </summary>
+        public static void DisposeFontCache()
+        {
+            lock (fontCacheLock)
+            {
+                staticFontCache?.Dispose();
+                staticFontCache = null;
             }
         }
     }

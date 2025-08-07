@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ModernTextViewer.src.Services;
 
 namespace ModernTextViewer.src.Models
 {
@@ -12,6 +13,12 @@ namespace ModernTextViewer.src.Models
         private string filePath = string.Empty;
         private bool isDirty;
         private List<HyperlinkModel> hyperlinks = new List<HyperlinkModel>();
+        
+        // Streaming support properties
+        private bool isStreamingMode = false;
+        private StreamingFileInfo? streamingFileInfo;
+        private long fileSize;
+        private long estimatedLineCount;
 
         public string FilePath 
         { 
@@ -140,6 +147,65 @@ namespace ModernTextViewer.src.Models
             
             // Final cleanup - remove any invalid hyperlinks
             hyperlinks.RemoveAll(h => h.StartIndex < 0 || h.Length <= 0);
+        }
+
+        // Streaming mode properties and methods
+        public bool IsStreamingMode 
+        { 
+            get => isStreamingMode;
+            private set => isStreamingMode = value;
+        }
+
+        public StreamingFileInfo? StreamingFileInfo 
+        { 
+            get => streamingFileInfo;
+            set => streamingFileInfo = value;
+        }
+
+        public long FileSize 
+        { 
+            get => fileSize;
+            set => fileSize = value;
+        }
+
+        public long EstimatedLineCount 
+        { 
+            get => estimatedLineCount;
+            set => estimatedLineCount = value;
+        }
+
+        public void EnableStreamingMode(StreamingFileInfo fileInfo)
+        {
+            IsStreamingMode = true;
+            StreamingFileInfo = fileInfo;
+            FileSize = fileInfo.FileSize;
+            EstimatedLineCount = fileInfo.EstimatedLineCount;
+            
+            // Clear content since we're streaming
+            content = string.Empty;
+        }
+
+        public void DisableStreamingMode()
+        {
+            IsStreamingMode = false;
+            StreamingFileInfo = null;
+            FileSize = 0;
+            EstimatedLineCount = 0;
+        }
+
+        public bool RequiresStreaming => StreamingFileInfo?.RequiresStreaming ?? false;
+
+        // Helper method for streaming mode content management
+        public void SetStreamingContent(string newContent, bool markDirty = true)
+        {
+            if (IsStreamingMode && markDirty)
+            {
+                IsDirty = true;
+            }
+            else if (!IsStreamingMode)
+            {
+                Content = newContent;
+            }
         }
     }
 }
