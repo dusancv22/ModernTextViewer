@@ -43,6 +43,7 @@ namespace ModernTextViewer.src.Forms
         private readonly Color darkForeColor = Color.FromArgb(220, 220, 220);
         private readonly Color darkToolbarColor = Color.FromArgb(45, 45, 45);
         private Label autoSaveLabel = null!;
+        private Label wordCountLabel = null!;
         private FindReplaceDialog? findReplaceDialog;
         
         // Undo/Redo state tracking
@@ -111,8 +112,8 @@ namespace ModernTextViewer.src.Forms
             this.DoubleBuffered = true;
             this.MinimumSize = new Size(200, 100);
 
-            InitializeTextBox();
             InitializeBottomToolbar();
+            InitializeTextBox();
             InitializeTitleBar();
             InitializeButtons();
 
@@ -265,6 +266,9 @@ namespace ModernTextViewer.src.Forms
             lastTextContent = textBox.Text;
 
             textBoxContainer.SendToBack();
+            
+            // Initialize word count
+            UpdateWordCount();
             
             // Save initial state for undo
             SaveUndoState();
@@ -447,6 +451,16 @@ namespace ModernTextViewer.src.Forms
             themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
             themeToggleButton.MouseLeave += ThemeToggleButton_MouseLeave;
 
+            wordCountLabel = new Label
+            {
+                Text = "Words: 0",
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleRight,
+                Padding = new Padding(5, 5, 10, 5), // Extra right padding for spacing from autoSaveLabel
+                ForeColor = isDarkMode ? darkForeColor : Color.Gray
+            };
+
             autoSaveLabel = new Label
             {
                 Text = "Last autosave: Never",
@@ -469,6 +483,7 @@ namespace ModernTextViewer.src.Forms
             bottomToolbar.Controls.Add(fontButton);
             bottomToolbar.Controls.Add(hyperlinkButton);
             bottomToolbar.Controls.Add(themeToggleButton);
+            bottomToolbar.Controls.Add(wordCountLabel);
             bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
@@ -631,6 +646,7 @@ namespace ModernTextViewer.src.Forms
                     document.Hyperlinks = hyperlinks;
                     document.ResetDirty();
                     UpdateHyperlinkRendering();
+                    UpdateWordCount();
                     
                     // Start autosave immediately for existing files
                     autoSaveTimer.Stop();
@@ -803,6 +819,7 @@ namespace ModernTextViewer.src.Forms
                     document.Hyperlinks = hyperlinks;
                     document.ResetDirty();
                     UpdateHyperlinkRendering();
+                    UpdateWordCount();
                     
                     // Start autosave immediately for existing files
                     autoSaveTimer.Stop(); // Reset the timer
@@ -932,6 +949,7 @@ namespace ModernTextViewer.src.Forms
             fontButton?.Dispose();
             hyperlinkButton?.Dispose();
             themeToggleButton?.Dispose();
+            wordCountLabel?.Dispose();
             autoSaveLabel?.Dispose();
             buttonToolTip?.Dispose();
         }
@@ -1074,6 +1092,9 @@ namespace ModernTextViewer.src.Forms
             
             // Update auto save label
             autoSaveLabel.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
+            
+            // Update word count label
+            wordCountLabel.ForeColor = isDarkMode ? darkForeColor : Color.Gray;
             
             // Update title bar
             titleBar.BackColor = isDarkMode ? darkToolbarColor : Color.WhiteSmoke;
@@ -1587,11 +1608,31 @@ namespace ModernTextViewer.src.Forms
             }
         }
 
+        private int CountWords(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return 0;
+
+            return text.Split(new char[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        }
+
+        private void UpdateWordCount()
+        {
+            if (wordCountLabel != null)
+            {
+                int wordCount = CountWords(textBox.Text);
+                wordCountLabel.Text = $"Words: {wordCount}";
+            }
+        }
+
         private void TextBox_TextChanged(object? sender, EventArgs e)
         {
             if (isUndoRedoOperation) return;
             
             document.IsDirty = true;
+            
+            // Update word count in real-time
+            UpdateWordCount();
             
             // Calculate the change in text
             string currentText = textBox.Text;
