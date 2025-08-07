@@ -7,9 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ModernTextViewer is a Windows Forms application built with .NET 8.0 that provides a modern text viewing and editing experience with features including:
 - Dark/light mode support
 - Auto-save functionality
-- Support for multiple file formats (.txt, .srt)
+- Support for multiple file formats (.txt, .srt, .md, .markdown)
+- Preview/raw mode toggle for markdown files with real-time HTML rendering
 - Custom window controls and styling
 - Font size adjustments via keyboard shortcuts
+- WebView2-powered markdown preview with theme-aware styling
 
 ## Build and Development Commands
 
@@ -32,9 +34,10 @@ dotnet clean
 The application follows a Model-View-Service pattern:
 
 - **Entry Point**: `Program.cs` - Initializes Windows Forms and launches `MainForm`
-- **Main UI**: `src/Forms/MainForm.cs` - The primary form handling all UI interactions, window management, and user input
-- **Data Model**: `src/Models/DocumentModel.cs` - Manages document state, content, and dirty tracking
+- **Main UI**: `src/Forms/MainForm.cs` - The primary form handling all UI interactions, window management, user input, and WebView2 integration for markdown preview
+- **Data Model**: `src/Models/DocumentModel.cs` - Manages document state, content, dirty tracking, and preview mode state
 - **File Operations**: `src/Services/FileService.cs` - Handles async file loading/saving with proper encoding and line ending normalization
+- **Preview Service**: `src/Services/PreviewService.cs` - Converts markdown to HTML with theme-aware styling for WebView2 rendering
 - **Custom Controls**: `src/Controls/CustomToolbar.cs` - Custom toolbar implementations
 
 ## Key Implementation Details
@@ -44,6 +47,20 @@ The application follows a Model-View-Service pattern:
 3. **File Handling**: UTF-8 encoding without BOM, normalizes line endings to system default
 4. **Font Scaling**: Ctrl+Plus/Minus for zoom, range 4-96pt
 5. **Dark Mode**: Default enabled, toggleable via UI button
+6. **Preview Mode**: Real-time markdown-to-HTML conversion using Markdig library
+7. **WebView2 Integration**: Lazy initialization for markdown preview with comprehensive error handling
+8. **Theme Synchronization**: Preview mode automatically adapts to current dark/light theme
+
+## Dependencies
+
+The project uses the following key dependencies:
+- **Markdig v0.41.3**: Markdown parsing and HTML conversion with advanced extensions support
+- **Microsoft.Web.WebView2 v1.0.3351.48**: Modern web browser control for HTML rendering in preview mode
+
+### System Requirements
+- .NET 8.0 Windows Runtime
+- WebView2 Runtime (automatically installed on Windows 10/11, or can be downloaded from Microsoft)
+- Windows 10 version 1809 or later (for WebView2 support)
 
 ## Testing
 
@@ -52,6 +69,39 @@ Currently no automated tests are configured. Manual testing recommended for:
 - UI responsiveness and dark/light mode switching
 - Keyboard shortcuts
 - Window resize and drag operations
+- **Preview Mode Functionality**:
+  - Toggle between raw and preview modes for markdown files (.md, .markdown)
+  - Content synchronization when switching between modes
+  - Theme switching while in preview mode
+  - WebView2 initialization and error handling
+  - Markdown rendering accuracy with various content types (headers, lists, code blocks, tables, etc.)
+
+## Troubleshooting
+
+### WebView2 Issues
+
+**Problem**: Preview mode fails to initialize or shows blank content
+- **Solution**: Ensure WebView2 Runtime is installed. Download from Microsoft's official website if missing.
+- **Diagnostic**: Check Windows Event Viewer for WebView2-related errors.
+
+**Problem**: Preview mode times out during initialization
+- **Cause**: WebView2 initialization timeout (10-second limit) or system configuration issues.
+- **Solution**: Restart the application. If problem persists, reinstall WebView2 Runtime.
+
+**Problem**: Preview not updating when switching themes
+- **Cause**: WebView2 CoreWebView2 not properly initialized.
+- **Solution**: Switch back to raw mode and then to preview mode again.
+
+### File Format Support
+
+**Markdown Preview**: Only available for files with `.md` or `.markdown` extensions.
+**Fallback Behavior**: Non-markdown files automatically stay in raw text mode.
+
+### Performance Considerations
+
+**Large Files**: WebView2 initialization adds ~2-3 seconds for first-time preview mode activation.
+**Memory Usage**: Preview mode uses additional memory for WebView2 process (~30-50MB).
+**Optimization**: CSS and markdown pipeline are cached for better performance.
 
 ## Agent Usage Guidelines
 

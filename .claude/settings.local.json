@@ -23,7 +23,11 @@
       "Bash(git pull:*)",
       "Bash(csc:*)",
       "Bash(word_count_test.exe)",
-      "Bash(del word_count_test.cs)"
+      "Bash(del word_count_test.cs)",
+      "WebFetch(domain:www.nuget.org)",
+      "Bash(dotnet add package:*)",
+      "Bash(start binDebugnet8.0-windowsModernTextViewer.exe)",
+      "Bash(taskkill:*)"
     ],
     "deny": []
   }
