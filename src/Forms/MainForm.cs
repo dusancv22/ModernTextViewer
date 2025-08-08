@@ -2086,6 +2086,12 @@ namespace ModernTextViewer.src.Forms
 
         private void UpdateHyperlinkRendering()
         {
+            // Performance guard for large files - skip hyperlink rendering for files >200KB
+            if (textBox.TextLength > 204800) // 200KB
+            {
+                return;
+            }
+            
             int savedSelectionStart = textBox.SelectionStart;
             int savedSelectionLength = textBox.SelectionLength;
             
@@ -2094,36 +2100,29 @@ namespace ModernTextViewer.src.Forms
             
             try
             {
-                // First, reset ALL text formatting
+                // BULK OPERATION: Reset ALL text formatting in one operation
                 textBox.SelectAll();
                 textBox.SelectionColor = isDarkMode ? darkForeColor : Color.Black;
                 
-                // Remove all underlines character by character
-                for (int i = 0; i < textBox.Text.Length; i++)
-                {
-                    textBox.Select(i, 1);
-                    Font charFont = textBox.SelectionFont ?? textBox.Font;
-                    if ((charFont.Style & FontStyle.Underline) != 0)
-                    {
-                        using var nonUnderlinedFont = new Font(charFont, charFont.Style & ~FontStyle.Underline);
-                        textBox.SelectionFont = nonUnderlinedFont;
-                    }
-                    textBox.SelectionColor = isDarkMode ? darkForeColor : Color.Black;
-                }
+                // BULK OPERATION: Remove all font styling (including underlines) in one operation
+                using var baseFont = new Font(textBox.Font.FontFamily, textBox.Font.Size, FontStyle.Regular);
+                textBox.SelectionFont = baseFont;
                 
-                // Apply hyperlink formatting only to valid hyperlinks
-                foreach (var hyperlink in document.Hyperlinks.ToList())
+                // Apply hyperlink formatting only to valid hyperlinks using bulk operations
+                var validHyperlinks = document.Hyperlinks.Where(h => 
+                    h.StartIndex >= 0 && 
+                    h.EndIndex <= textBox.TextLength && 
+                    h.Length > 0).ToList();
+                
+                foreach (var hyperlink in validHyperlinks)
                 {
-                    if (hyperlink.StartIndex >= 0 && hyperlink.EndIndex <= textBox.TextLength)
-                    {
-                        textBox.Select(hyperlink.StartIndex, hyperlink.Length);
-                        textBox.SelectionColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
-                        
-                        // Apply underline
-                        Font currentFont = textBox.SelectionFont ?? textBox.Font;
-                        using var underlinedFont = new Font(currentFont, currentFont.Style | FontStyle.Underline);
-                        textBox.SelectionFont = underlinedFont;
-                    }
+                    // Single selection operation per hyperlink (not per character)
+                    textBox.Select(hyperlink.StartIndex, hyperlink.Length);
+                    textBox.SelectionColor = isDarkMode ? Color.FromArgb(77, 166, 255) : Color.Blue;
+                    
+                    // Single font operation per hyperlink
+                    using var underlinedFont = new Font(baseFont, baseFont.Style | FontStyle.Underline);
+                    textBox.SelectionFont = underlinedFont;
                 }
             }
             finally
