@@ -289,7 +289,7 @@ namespace ModernTextViewer.src.Services
                     // Subsequent chunks use lazy loading placeholder
                     htmlBuilder.AppendLine($"        <div class=\"content-chunk loading-chunk\" id=\"chunk-{i}\" data-content-index=\"{i}\">");
                     htmlBuilder.AppendLine($"            <div>Loading section {i + 1}...</div>");
-                    htmlBuilder.AppendLine($"            <script type=\"text/html\" id=\"chunk-data-{i}\">{WebUtility.HtmlEncode(chunks[i])}</script>");
+                    htmlBuilder.AppendLine($"            <script type=\"text/html\" id=\"chunk-data-{i}\">{chunks[i]}</script>");
                     htmlBuilder.AppendLine("        </div>");
                 }
             }
