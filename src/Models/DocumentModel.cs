@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -11,6 +12,7 @@ namespace ModernTextViewer.src.Models
         private string content = string.Empty;
         private string filePath = string.Empty;
         private bool isDirty;
+        private bool isPreviewMode = false;
         private List<HyperlinkModel> hyperlinks = new List<HyperlinkModel>();
 
         public string FilePath 
@@ -39,6 +41,31 @@ namespace ModernTextViewer.src.Models
             }
         }
 
+        /// <summary>
+        /// Gets or sets whether the document is currently in preview mode.
+        /// Preview mode displays rendered markdown in a WebView2 control instead of raw text.
+        /// Only supported for markdown files (.md, .markdown).
+        /// </summary>
+        /// <value>
+        /// <c>true</c> if the document is in preview mode; otherwise, <c>false</c>.
+        /// </value>
+        /// <remarks>
+        /// Changing this property triggers the <see cref="OnPreviewModeChanged"/> virtual method.
+        /// Preview mode is automatically disabled for non-markdown files.
+        /// </remarks>
+        public bool IsPreviewMode
+        {
+            get => isPreviewMode;
+            set
+            {
+                if (isPreviewMode != value)
+                {
+                    isPreviewMode = value;
+                    OnPreviewModeChanged();
+                }
+            }
+        }
+
         public string Content
         {
             get => content;
@@ -57,6 +84,47 @@ namespace ModernTextViewer.src.Models
             IsDirty = false;
         }
 
+        /// <summary>
+        /// Determines whether the current document supports preview mode based on its file extension.
+        /// Preview mode is available for markdown files with .md or .markdown extensions.
+        /// </summary>
+        /// <returns>
+        /// <c>true</c> if the document supports preview mode; otherwise, <c>false</c>.
+        /// </returns>
+        /// <remarks>
+        /// This method performs case-insensitive comparison of file extensions.
+        /// Supported extensions:
+        /// <list type="bullet">
+        /// <item>.md</item>
+        /// <item>.markdown</item>
+        /// </list>
+        /// Returns <c>false</c> if <see cref="FilePath"/> is null, empty, or has no extension.
+        /// </remarks>
+        /// <example>
+        /// <code>
+        /// var doc = new DocumentModel();
+        /// doc.FilePath = "readme.md";
+        /// bool canPreview = doc.SupportsPreview(); // Returns true
+        /// 
+        /// doc.FilePath = "notes.txt";
+        /// bool canPreview2 = doc.SupportsPreview(); // Returns false
+        /// </code>
+        /// </example>
+        public bool SupportsPreview()
+        {
+            if (string.IsNullOrEmpty(filePath))
+                return false;
+
+            string extension = Path.GetExtension(filePath);
+            if (string.IsNullOrEmpty(extension))
+                return false;
+
+            // Convert to lowercase for case-insensitive comparison
+            extension = extension.ToLowerInvariant();
+
+            return extension == ".md" || extension == ".markdown";
+        }
+
         protected virtual void OnFilePathChanged()
         {
             // For future use (e.g., updating window title)
@@ -65,6 +133,20 @@ namespace ModernTextViewer.src.Models
         protected virtual void OnDirtyChanged()
         {
             // For future use (e.g., updating UI to show unsaved changes)
+        }
+
+        /// <summary>
+        /// Called when the <see cref="IsPreviewMode"/> property changes.
+        /// This virtual method can be overridden in derived classes to handle preview mode state changes.
+        /// </summary>
+        /// <remarks>
+        /// The default implementation is empty and serves as an extension point for future functionality
+        /// such as updating UI to reflect the current preview/raw mode state.
+        /// This method is called automatically when <see cref="IsPreviewMode"/> is set to a different value.
+        /// </remarks>
+        protected virtual void OnPreviewModeChanged()
+        {
+            // For future use (e.g., updating UI to show preview/raw mode)
         }
 
         public List<HyperlinkModel> Hyperlinks

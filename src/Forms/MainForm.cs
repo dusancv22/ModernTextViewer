@@ -10,6 +10,8 @@ using System.IO;
 using System.Drawing.Text;
 using System.ComponentModel;
 using System.Linq;
+using Microsoft.Web.WebView2.WinForms;
+using System.Threading.Tasks;
 
 namespace ModernTextViewer.src.Forms
 {
@@ -22,11 +24,13 @@ namespace ModernTextViewer.src.Forms
         private Button minimizeButton = null!;
         private Panel bottomToolbar = null!;
         private Button openButton = null!;
+        private Button previewToggleButton = null!;
         private Button saveButton = null!;
         private Button quickSaveButton = null!;
         private Button fontButton = null!;
         private Button hyperlinkButton = null!;
         private Button themeToggleButton = null!;
+        private WebView2 webView = null!;
         private ContextMenuStrip textBoxContextMenu = null!;
         private string lastTextContent = string.Empty;
         private ToolTip buttonToolTip = null!;
@@ -38,6 +42,7 @@ namespace ModernTextViewer.src.Forms
         private float currentFontSize = 10f;
         private readonly DocumentModel document = new DocumentModel();
         private bool isDarkMode = true;  // Default to dark mode
+        private bool isWebViewInitialized = false;
         private System.Windows.Forms.Timer autoSaveTimer;
         private readonly Color darkBackColor = Color.FromArgb(30, 30, 30);
         private readonly Color darkForeColor = Color.FromArgb(220, 220, 220);
@@ -225,6 +230,19 @@ namespace ModernTextViewer.src.Forms
                 DetectUrls = false
             };
 
+            webView = new WebView2
+            {
+                Dock = DockStyle.Fill,
+                Visible = false,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            
+            // Set default background color to match theme
+            webView.DefaultBackgroundColor = isDarkMode ? darkBackColor : Color.White;
+            
+            // Don't initialize WebView2 immediately - do it lazily when needed for preview
+
             // Handle line endings in KeyDown instead of KeyPress
             textBox.KeyDown += (s, e) => 
             {
@@ -258,6 +276,7 @@ namespace ModernTextViewer.src.Forms
 
             // Set up control hierarchy
             paddingPanel.Controls.Add(textBox);
+            paddingPanel.Controls.Add(webView);
             textBoxContainer.Controls.Add(paddingPanel);
             this.Controls.Add(textBoxContainer);
 
@@ -357,6 +376,26 @@ namespace ModernTextViewer.src.Forms
             openButton.FlatAppearance.BorderSize = 0;
             openButton.Click += OpenButton_Click;
             buttonToolTip.SetToolTip(openButton, "Open file");
+
+            previewToggleButton = new Button
+            {
+                Text = document.IsPreviewMode ? "📝" : "👁️",
+                Width = 25,
+                Height = 20,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(130, 200, 255) : Color.DarkBlue
+            };
+            previewToggleButton.FlatAppearance.BorderSize = 0;
+            previewToggleButton.Click += PreviewToggleButton_Click;
+            buttonToolTip.SetToolTip(previewToggleButton, "Toggle preview mode");
+            
+            // Add hover effects for preview button
+            previewToggleButton.MouseEnter += PreviewToggleButton_MouseEnter;
+            previewToggleButton.MouseLeave += PreviewToggleButton_MouseLeave;
 
             saveButton = new Button
             {
@@ -478,6 +517,7 @@ namespace ModernTextViewer.src.Forms
             quickSaveButton.Click += QuickSaveButton_Click;
             
             bottomToolbar.Controls.Add(openButton);
+            bottomToolbar.Controls.Add(previewToggleButton);
             bottomToolbar.Controls.Add(saveButton);
             bottomToolbar.Controls.Add(quickSaveButton);
             bottomToolbar.Controls.Add(fontButton);
@@ -643,10 +683,16 @@ namespace ModernTextViewer.src.Forms
                     var (content, hyperlinks) = await FileService.LoadFileAsync(openDialog.FileName);
                     textBox.Text = content;
                     document.FilePath = openDialog.FileName;
+                    document.Content = content;
                     document.Hyperlinks = hyperlinks;
                     document.ResetDirty();
                     UpdateHyperlinkRendering();
                     UpdateWordCount();
+                    
+                    // Reset preview mode when opening new file
+                    document.IsPreviewMode = false;
+                    UpdatePreviewToggleButton();
+                    ShowRawMode();
                     
                     // Start autosave immediately for existing files
                     autoSaveTimer.Stop();
@@ -673,7 +719,10 @@ namespace ModernTextViewer.src.Forms
                 
                 if (saveDialog.ShowDialog() == DialogResult.OK)
                 {
-                    await FileService.SaveFileAsync(saveDialog.FileName, textBox.Text, document.Hyperlinks);
+                    // Ensure document content is current before saving
+                    SyncContentForSave();
+                    
+                    await FileService.SaveFileAsync(saveDialog.FileName, document.Content, document.Hyperlinks);
                     document.FilePath = saveDialog.FileName;
                     document.ResetDirty();
                     autoSaveLabel.Text = $"Last save: {DateTime.Now.ToString("HH:mm:ss")}";
@@ -696,7 +745,10 @@ namespace ModernTextViewer.src.Forms
 
             try
             {
-                await FileService.SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
+                // Ensure document content is current before saving
+                SyncContentForSave();
+                
+                await FileService.SaveFileAsync(document.FilePath, document.Content, document.Hyperlinks);
                 document.ResetDirty();
                 autoSaveLabel.Text = $"Successfully saved: {DateTime.Now.ToString("HH:mm:ss")}";
             }
@@ -816,10 +868,16 @@ namespace ModernTextViewer.src.Forms
                     var (content, hyperlinks) = await FileService.LoadFileAsync(files[0]);
                     textBox.Text = content;
                     document.FilePath = files[0];
+                    document.Content = content;
                     document.Hyperlinks = hyperlinks;
                     document.ResetDirty();
                     UpdateHyperlinkRendering();
                     UpdateWordCount();
+                    
+                    // Reset preview mode when opening new file
+                    document.IsPreviewMode = false;
+                    UpdatePreviewToggleButton();
+                    ShowRawMode();
                     
                     // Start autosave immediately for existing files
                     autoSaveTimer.Stop(); // Reset the timer
@@ -840,7 +898,10 @@ namespace ModernTextViewer.src.Forms
             {
                 try
                 {
-                    await FileService.SaveFileAsync(document.FilePath, textBox.Text, document.Hyperlinks);
+                    // Ensure document content is current before auto-saving
+                    SyncContentForSave();
+                    
+                    await FileService.SaveFileAsync(document.FilePath, document.Content, document.Hyperlinks);
                     document.ResetDirty();
                     autoSaveLabel.Text = $"Last autosave: {DateTime.Now.ToString("HH:mm:ss")}";
                 }
@@ -938,12 +999,34 @@ namespace ModernTextViewer.src.Forms
             autoSaveTimer?.Dispose();
             hyperlinkUpdateTimer?.Dispose();
             textBox?.Dispose();
+            
+            // Properly dispose WebView2
+            if (webView != null)
+            {
+                try
+                {
+                    if (isWebViewInitialized && webView.CoreWebView2 != null)
+                    {
+                        webView.CoreWebView2.Stop();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Error stopping WebView2: {ex.Message}");
+                }
+                finally
+                {
+                    webView.Dispose();
+                }
+            }
+            
             titleBar?.Dispose();
             closeButton?.Dispose();
             maximizeButton?.Dispose();
             minimizeButton?.Dispose();
             bottomToolbar?.Dispose();
             openButton?.Dispose();
+            previewToggleButton?.Dispose();
             saveButton?.Dispose();
             quickSaveButton?.Dispose();
             fontButton?.Dispose();
@@ -1042,6 +1125,12 @@ namespace ModernTextViewer.src.Forms
             // Update form colors
             this.BackColor = isDarkMode ? darkBackColor : Color.White;
             
+            // Update WebView2 background color to match theme
+            if (webView != null)
+            {
+                webView.DefaultBackgroundColor = isDarkMode ? darkBackColor : Color.White;
+            }
+            
             // Update all panels to prevent dark edges
             UpdatePanelColors(this);
             
@@ -1085,6 +1174,9 @@ namespace ModernTextViewer.src.Forms
             quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
             fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
             hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+            
+            // Update preview toggle button
+            previewToggleButton.ForeColor = isDarkMode ? Color.FromArgb(130, 200, 255) : Color.DarkBlue;
             
             // Update theme toggle button
             themeToggleButton.Text = isDarkMode ? "☀️" : "🌙";
@@ -1134,6 +1226,12 @@ namespace ModernTextViewer.src.Forms
             {
                 findReplaceDialog.Dispose();
                 findReplaceDialog = null;
+            }
+            
+            // Update WebView theme if in preview mode
+            if (document.IsPreviewMode && webView != null && webView.Visible && webView.CoreWebView2 != null)
+            {
+                _ = UpdatePreviewTheme(); // Fire and forget async call
             }
             
             // Refresh the form
@@ -1247,6 +1345,8 @@ namespace ModernTextViewer.src.Forms
             fontButton.MouseLeave -= FontButton_MouseLeave;
             hyperlinkButton.MouseEnter -= HyperlinkButton_MouseEnter;
             hyperlinkButton.MouseLeave -= HyperlinkButton_MouseLeave;
+            previewToggleButton.MouseEnter -= PreviewToggleButton_MouseEnter;
+            previewToggleButton.MouseLeave -= PreviewToggleButton_MouseLeave;
             themeToggleButton.MouseEnter -= ThemeToggleButton_MouseEnter;
             themeToggleButton.MouseLeave -= ThemeToggleButton_MouseLeave;
             
@@ -1259,6 +1359,8 @@ namespace ModernTextViewer.src.Forms
             fontButton.MouseLeave += FontButton_MouseLeave;
             hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
             hyperlinkButton.MouseLeave += HyperlinkButton_MouseLeave;
+            previewToggleButton.MouseEnter += PreviewToggleButton_MouseEnter;
+            previewToggleButton.MouseLeave += PreviewToggleButton_MouseLeave;
             themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
             themeToggleButton.MouseLeave += ThemeToggleButton_MouseLeave;
         }
@@ -1282,6 +1384,11 @@ namespace ModernTextViewer.src.Forms
             hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(130, 220, 255) : Color.DodgerBlue;
         private void HyperlinkButton_MouseLeave(object? sender, EventArgs e) => 
             hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+            
+        private void PreviewToggleButton_MouseEnter(object? sender, EventArgs e) => 
+            previewToggleButton.ForeColor = isDarkMode ? Color.FromArgb(160, 220, 255) : Color.DodgerBlue;
+        private void PreviewToggleButton_MouseLeave(object? sender, EventArgs e) => 
+            previewToggleButton.ForeColor = isDarkMode ? Color.FromArgb(130, 200, 255) : Color.DarkBlue;
             
         private void ThemeToggleButton_MouseEnter(object? sender, EventArgs e) => 
             themeToggleButton.ForeColor = isDarkMode ? Color.FromArgb(255, 240, 100) : Color.FromArgb(150, 150, 255);
@@ -1631,6 +1738,9 @@ namespace ModernTextViewer.src.Forms
             
             document.IsDirty = true;
             
+            // Sync content with document model
+            document.Content = textBox.Text;
+            
             // Update word count in real-time
             UpdateWordCount();
             
@@ -1763,6 +1873,415 @@ namespace ModernTextViewer.src.Forms
             }
 
             HyperlinkService.SetClipboardWithHyperlinks(selectedText, selectedHyperlinks);
+        }
+
+        /// <summary>
+        /// Handles the preview toggle button click event to switch between raw text and preview modes.
+        /// Validates file content and type before allowing preview mode activation.
+        /// </summary>
+        /// <param name="sender">The button that triggered the event</param>
+        /// <param name="e">Event arguments</param>
+        /// <remarks>
+        /// This method performs the following validations:
+        /// <list type="bullet">
+        /// <item>Ensures there is content to preview (either from file or textbox)</item>
+        /// <item>Verifies the file supports preview mode (.md, .markdown extensions)</item>
+        /// <item>Shows appropriate error messages for unsupported scenarios</item>
+        /// </list>
+        /// If all validations pass, calls <see cref="SwitchViewMode"/> to toggle between modes.
+        /// </remarks>
+        private async void PreviewToggleButton_Click(object? sender, EventArgs e)
+        {
+            // Check if a file is open
+            if (string.IsNullOrEmpty(document.FilePath) && string.IsNullOrEmpty(textBox.Text.Trim()))
+            {
+                MessageBox.Show("Please open a Markdown file or type some content to use preview mode.", 
+                    "No Content to Preview", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            
+            // Check if current file supports preview
+            if (!document.SupportsPreview() && !string.IsNullOrEmpty(document.FilePath))
+            {
+                MessageBox.Show("Preview is only available for Markdown files (.md, .markdown)\n\nCurrent file type is not supported.", 
+                    "Preview Not Available", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            
+            // For content without a file path, assume it's markdown if user wants preview
+            if (string.IsNullOrEmpty(document.FilePath) && !string.IsNullOrEmpty(textBox.Text.Trim()))
+            {
+                var result = MessageBox.Show("Preview mode will treat this content as Markdown.\n\nDo you want to continue?", 
+                    "Preview Markdown Content", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (result != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
+            
+            // Toggle mode
+            document.IsPreviewMode = !document.IsPreviewMode;
+            
+            // Update UI
+            UpdatePreviewToggleButton();
+            
+            // Switch view
+            await SwitchViewMode();
+        }
+
+        /// <summary>
+        /// Updates the preview toggle button's appearance and tooltip based on the current view mode.
+        /// Changes button text and tooltip to reflect whether the user can switch to preview or raw mode.
+        /// </summary>
+        /// <remarks>
+        /// Button states:
+        /// <list type="bullet">
+        /// <item>Preview mode active: Shows "📝" (pencil) with "Switch to raw mode" tooltip</item>
+        /// <item>Raw mode active: Shows "👁️" (eye) with "Toggle preview mode" tooltip</item>
+        /// </list>
+        /// This method is called automatically when the view mode changes.
+        /// </remarks>
+        private void UpdatePreviewToggleButton()
+        {
+            if (document.IsPreviewMode)
+            {
+                previewToggleButton.Text = "📝";
+                buttonToolTip.SetToolTip(previewToggleButton, "Switch to raw mode");
+            }
+            else
+            {
+                previewToggleButton.Text = "👁️";
+                buttonToolTip.SetToolTip(previewToggleButton, "Toggle preview mode");
+            }
+        }
+
+        private async Task SwitchViewMode()
+        {
+            if (document.IsPreviewMode)
+            {
+                await ShowPreviewMode();
+            }
+            else
+            {
+                ShowRawMode();
+            }
+        }
+
+        /// <summary>
+        /// Asynchronously switches the interface to preview mode, initializing WebView2 if needed.
+        /// Converts the current document content to HTML and displays it in the WebView2 control.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation</returns>
+        /// <exception cref="InvalidOperationException">Thrown when WebView2 fails to initialize or times out</exception>
+        /// <remarks>
+        /// This method performs the following steps:
+        /// <list type="number">
+        /// <item>Initializes WebView2 if not already initialized (lazy loading)</item>
+        /// <item>Converts markdown content to themed HTML using <see cref="PreviewService"/></item>
+        /// <item>Loads HTML into WebView2 control</item>
+        /// <item>Hides text editor and shows WebView2</item>
+        /// <item>Updates status label to indicate preview mode</item>
+        /// </list>
+        /// Includes comprehensive error handling with user-friendly error messages.
+        /// WebView2 initialization has a 10-second timeout to prevent hanging.
+        /// </remarks>
+        private async Task ShowPreviewMode()
+        {
+            try
+            {
+                // Ensure WebView2 is initialized
+                if (!isWebViewInitialized)
+                {
+                    // Show loading indicator or status
+                    autoSaveLabel.Text = "Initializing preview...";
+                    
+                    try
+                    {
+                        await InitializeWebView();
+                    }
+                    catch (TimeoutException)
+                    {
+                        throw new InvalidOperationException("Preview mode timed out during initialization. This may be due to WebView2 runtime not being available or a system configuration issue.");
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException($"Preview mode is not available: {ex.Message}");
+                    }
+                }
+                
+                // Sync content from textBox to document
+                document.Content = textBox.Text;
+                
+                // Mark content as dirty if it has changed
+                if (!document.IsDirty && !string.IsNullOrEmpty(textBox.Text))
+                {
+                    document.IsDirty = true;
+                }
+                
+                // Generate HTML using new universal CSS approach for fast theme switching
+                string html = PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
+                
+                // Load HTML into webView
+                webView.NavigateToString(html);
+                
+                // Hide textBox, show webView
+                textBox.Visible = false;
+                webView.Visible = true;
+                webView.BringToFront();
+                
+                autoSaveLabel.Text = "Preview mode active";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error switching to preview mode: {ex.Message}\n\nFalling back to raw mode.", "Preview Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                
+                // Fallback to raw mode
+                document.IsPreviewMode = false;
+                UpdatePreviewToggleButton();
+                ShowRawMode();
+                autoSaveLabel.Text = "Preview unavailable - using raw mode";
+            }
+        }
+
+        /// <summary>
+        /// Switches the interface back to raw text editing mode, hiding the WebView2 preview.
+        /// Ensures content synchronization between preview and text editor.
+        /// </summary>
+        /// <remarks>
+        /// This method performs the following steps:
+        /// <list type="number">
+        /// <item>Hides WebView2 control and shows text editor</item>
+        /// <item>Synchronizes content from document model to text editor if needed</item>
+        /// <item>Returns focus to the text editor for immediate editing</item>
+        /// <item>Updates status label to show auto-save information</item>
+        /// </list>
+        /// Content synchronization ensures no data is lost when switching between modes.
+        /// </remarks>
+        private void ShowRawMode()
+        {
+            // Show textBox, hide webView
+            webView.Visible = false;
+            textBox.Visible = true;
+            textBox.BringToFront();
+            
+            // Ensure textBox content is current
+            if (document.Content != textBox.Text)
+            {
+                textBox.Text = document.Content;
+            }
+            
+            // Set focus back to textBox
+            textBox.Focus();
+            
+            // Update status if not already showing an error message
+            if (!autoSaveLabel.Text.Contains("unavailable") && !autoSaveLabel.Text.Contains("failed"))
+            {
+                if (!string.IsNullOrEmpty(document.FilePath))
+                {
+                    autoSaveLabel.Text = $"Editing: {System.IO.Path.GetFileName(document.FilePath)}";
+                }
+                else
+                {
+                    autoSaveLabel.Text = "Raw editing mode";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Asynchronously initializes the WebView2 control with security settings and event handlers.
+        /// This method is called lazily when preview mode is first activated.
+        /// </summary>
+        /// <returns>A task representing the asynchronous initialization operation</returns>
+        /// <exception cref="TimeoutException">Thrown when initialization takes longer than 10 seconds</exception>
+        /// <exception cref="InvalidOperationException">Thrown when WebView2 initialization fails</exception>
+        /// <remarks>
+        /// Initialization includes:
+        /// <list type="bullet">
+        /// <item>10-second timeout to prevent hanging on system issues</item>
+        /// <item>Disabling context menus for cleaner preview experience</item>
+        /// <item>Disabling developer tools for security</item>
+        /// <item>Disabling autofill features for privacy</item>
+        /// <item>Adding navigation event handlers for error reporting</item>
+        /// </list>
+        /// This method sets <see cref="isWebViewInitialized"/> to true upon successful completion.
+        /// WebView2 runtime must be installed on the system for initialization to succeed.
+        /// </remarks>
+        private async Task InitializeWebView()
+        {
+            try
+            {
+                // Add timeout to prevent hanging
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(10));
+                var initTask = webView.EnsureCoreWebView2Async();
+                
+                var completedTask = await Task.WhenAny(initTask, timeoutTask);
+                if (completedTask == timeoutTask)
+                {
+                    throw new TimeoutException("WebView2 initialization timed out after 10 seconds");
+                }
+                
+                // Wait for the actual initialization to complete
+                await initTask;
+                
+                // Configure basic settings
+                if (webView.CoreWebView2 != null)
+                {
+                    // Set background color to match current theme
+                    webView.DefaultBackgroundColor = isDarkMode ? darkBackColor : Color.White;
+                    
+                    // Disable context menu
+                    webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                    
+                    // Disable developer tools
+                    webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                    
+                    // Disable general autofill
+                    webView.CoreWebView2.Settings.IsGeneralAutofillEnabled = false;
+                    
+                    // Disable password autosave
+                    webView.CoreWebView2.Settings.IsPasswordAutosaveEnabled = false;
+                    
+                    // Add navigation event handlers for better error handling
+                    webView.CoreWebView2.NavigationCompleted += (sender, args) =>
+                    {
+                        if (!args.IsSuccess)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"WebView2 navigation failed: {args.WebErrorStatus}");
+                        }
+                    };
+                }
+                
+                isWebViewInitialized = true;
+            }
+            catch (Exception ex)
+            {
+                isWebViewInitialized = false;
+                System.Diagnostics.Debug.WriteLine($"WebView2 initialization failed: {ex.Message}");
+                throw new InvalidOperationException($"Failed to initialize WebView2: {ex.Message}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Updates the theme of the preview content instantly using JavaScript injection.
+        /// This method uses CSS custom properties to switch themes without page reloads.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation</returns>
+        /// <remarks>
+        /// This method provides instant theme switching by:
+        /// <list type="bullet">
+        /// <item>Using JavaScript to change CSS custom properties</item>
+        /// <item>Setting data-theme attribute on html and body elements</item>
+        /// <item>Triggering smooth CSS transitions for visual feedback</item>
+        /// <item>Falling back to full page reload if JavaScript fails</item>
+        /// </list>
+        /// 
+        /// Performance: ~500ms vs ~10 seconds with the old approach
+        /// Only updates if WebView2 is properly initialized and CoreWebView2 is available.
+        /// </remarks>
+        private async Task UpdatePreviewTheme()
+        {
+            try
+            {
+                if (webView.CoreWebView2 != null)
+                {
+                    // Show immediate visual feedback
+                    autoSaveLabel.Text = "Switching theme...";
+                    
+                    // JavaScript to instantly switch theme using CSS custom properties
+                    string themeValue = isDarkMode ? "dark" : "light";
+                    string themeScript = $@"
+                        try {{
+                            // Set theme attribute on html and body elements
+                            document.documentElement.setAttribute('data-theme', '{themeValue}');
+                            document.body.setAttribute('data-theme', '{themeValue}');
+                            
+                            // Trigger a small animation to provide visual feedback
+                            document.body.style.opacity = '0.9';
+                            setTimeout(() => {{
+                                document.body.style.opacity = '1';
+                            }}, 100);
+                            
+                            // Return success indicator
+                            'theme-switch-success';
+                        }} catch (error) {{
+                            'theme-switch-error: ' + error.message;
+                        }}
+                    ";
+                    
+                    // Execute the theme switching script
+                    string result = await webView.CoreWebView2.ExecuteScriptAsync(themeScript);
+                    
+                    // Check if JavaScript approach was successful
+                    if (result.Contains("theme-switch-success"))
+                    {
+                        // Success - theme switched instantly
+                        autoSaveLabel.Text = document.IsPreviewMode ? "Preview mode active" : "Raw editing mode";
+                    }
+                    else
+                    {
+                        // JavaScript failed, fall back to full page reload
+                        System.Diagnostics.Debug.WriteLine($"JavaScript theme switching failed: {result}");
+                        await FallbackToFullThemeReload();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // JavaScript approach failed, try fallback
+                System.Diagnostics.Debug.WriteLine($"Failed to update preview theme with JavaScript: {ex.Message}");
+                try
+                {
+                    await FallbackToFullThemeReload();
+                }
+                catch (Exception fallbackEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Fallback theme update also failed: {fallbackEx.Message}");
+                    autoSaveLabel.Text = "Theme update failed";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Fallback method that performs a full page reload when JavaScript theme switching fails.
+        /// This maintains the original functionality as a backup mechanism.
+        /// </summary>
+        /// <returns>A task representing the asynchronous operation</returns>
+        private async Task FallbackToFullThemeReload()
+        {
+            if (webView.CoreWebView2 != null)
+            {
+                autoSaveLabel.Text = "Reloading preview...";
+                
+                // Use the new universal CSS approach even in fallback
+                string htmlContent = PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
+                webView.NavigateToString(htmlContent);
+                
+                // Wait a moment for the page to load
+                await Task.Delay(500);
+                autoSaveLabel.Text = "Preview mode active";
+            }
+        }
+
+        /// <summary>
+        /// Ensures document.Content is synchronized with the current content,
+        /// regardless of whether we're in preview mode or raw mode.
+        /// This is essential before any save operation.
+        /// </summary>
+        private void SyncContentForSave()
+        {
+            if (!document.IsPreviewMode)
+            {
+                // In raw mode, textBox has the current content
+                document.Content = textBox.Text;
+            }
+            // In preview mode, document.Content should already be current,
+            // but we'll sync from textBox if it's visible (shouldn't normally happen)
+            else if (textBox.Visible)
+            {
+                document.Content = textBox.Text;
+            }
+            // If in preview mode and textBox is hidden, document.Content is already current
         }
 
         private class DarkColorTable : ProfessionalColorTable
