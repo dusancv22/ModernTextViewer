@@ -27,6 +27,9 @@ namespace ModernTextViewer.src.Services
         // Performance thresholds for large content optimization
         private const int LARGE_CONTENT_THRESHOLD = 50000; // 50KB HTML threshold
         private const int CHUNK_SIZE = 25000; // 25KB per chunk
+        
+        // Emergency fallback: disable chunking if set to false (for debugging)
+        private const bool ENABLE_CHUNKING = true;
 
         /// <summary>
         /// Converts markdown text to HTML using the cached Markdig pipeline.
@@ -201,7 +204,7 @@ namespace ModernTextViewer.src.Services
                 string htmlContent = ConvertMarkdownToHtml(markdownText);
                 
                 // Check if content is large and needs optimization
-                if (htmlContent.Length > LARGE_CONTENT_THRESHOLD)
+                if (ENABLE_CHUNKING && htmlContent.Length > LARGE_CONTENT_THRESHOLD)
                 {
                     return GenerateOptimizedLargeContentHtml(htmlContent, isDarkMode);
                 }
@@ -286,7 +289,7 @@ namespace ModernTextViewer.src.Services
                     // Subsequent chunks use lazy loading placeholder
                     htmlBuilder.AppendLine($"        <div class=\"content-chunk loading-chunk\" id=\"chunk-{i}\" data-content-index=\"{i}\">");
                     htmlBuilder.AppendLine($"            <div>Loading section {i + 1}...</div>");
-                    htmlBuilder.AppendLine($"            <script type=\"application/json\" id=\"chunk-data-{i}\">{WebUtility.HtmlEncode(chunks[i])}</script>");
+                    htmlBuilder.AppendLine($"            <script type=\"text/html\" id=\"chunk-data-{i}\">{WebUtility.HtmlEncode(chunks[i])}</script>");
                     htmlBuilder.AppendLine("        </div>");
                 }
             }
@@ -420,7 +423,7 @@ namespace ModernTextViewer.src.Services
                 try {
                     const dataScript = document.getElementById('chunk-data-' + index);
                     if (dataScript) {
-                        const content = JSON.parse(dataScript.textContent);
+                        const content = dataScript.textContent;
                         
                         // Replace loading content with actual content
                         element.innerHTML = content;
@@ -432,7 +435,21 @@ namespace ModernTextViewer.src.Services
                     }
                 } catch (error) {
                     console.warn('Failed to load chunk content:', error);
-                    element.innerHTML = '<div style=""color: var(--text-color); text-align: center; padding: 20px;"">Failed to load content section</div>';
+                    // Fallback: try to load content directly without encoding
+                    try {
+                        const dataScript = document.getElementById('chunk-data-' + index);
+                        if (dataScript && dataScript.textContent) {
+                            element.innerHTML = dataScript.textContent;
+                            element.classList.remove('loading-chunk');
+                            element.classList.add('content-visible');
+                            dataScript.remove();
+                        } else {
+                            element.innerHTML = '<div style=""color: var(--text-color); text-align: center; padding: 20px;"">Failed to load content section</div>';
+                        }
+                    } catch (fallbackError) {
+                        console.error('Fallback loading also failed:', fallbackError);
+                        element.innerHTML = '<div style=""color: var(--text-color); text-align: center; padding: 20px;"">Failed to load content section</div>';
+                    }
                 }
             }
             
