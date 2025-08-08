@@ -27,7 +27,11 @@
       "WebFetch(domain:www.nuget.org)",
       "Bash(dotnet add package:*)",
       "Bash(start binDebugnet8.0-windowsModernTextViewer.exe)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(del TestRunner.cs TestRunner.csproj)",
+      "Bash(dotnet clean:*)",
+      "Bash(del:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }
