@@ -34,6 +34,15 @@ A modern, feature-rich text editor for Windows with a clean interface, dark mode
 - **Drag & Drop**: Simply drag files into the window to open them
 - **Undo/Redo**: Standard undo functionality (Ctrl+Z)
 
+## 📸 Visual Showcase
+
+### Raw Mode vs Preview Mode
+Experience the power of instant markdown preview with seamless switching between raw editing and formatted display:
+
+![Raw Mode vs Preview Mode - Side-by-side comparison showing markdown editing and real-time preview](./images/app-overview.jpg)
+
+*Left: Raw markdown editing mode with syntax highlighting | Right: Real-time HTML preview with GitHub-style formatting*
+
 ### ⌨️ Keyboard Shortcuts
 
 | Action | Shortcut |
@@ -103,6 +112,13 @@ ModernTextViewer features breakthrough theme switching performance that delivers
 
 This innovation makes ModernTextViewer one of the fastest markdown editors for theme switching, providing a seamless user experience when working with different lighting conditions throughout the day.
 
+### Instant Theme Switching in Action
+See the revolutionary performance improvement in real-time - themes switch instantly without any page reloads:
+
+![Light Mode vs Dark Mode - Instant theme switching demonstration in preview mode](./images/dark-light-modes.jpg)
+
+*Instant theme switching: Same document, different themes, zero waiting time. Switch between light and dark modes in under 500ms.*
+
 ## 📖 Usage Guide
 
 ### Opening Files
@@ -132,6 +148,8 @@ This innovation makes ModernTextViewer one of the fastest markdown editors for t
 3. View your markdown rendered with GitHub-style formatting
 4. Click the 📝 button to return to raw editing mode
 5. **Theme switching**: Change themes instantly while in preview mode - no waiting!
+
+*💡 See the [Visual Showcase](#-visual-showcase) above for side-by-side comparisons of raw vs preview modes and instant theme switching demonstrations.*
 
 ## 🛠️ Technical Details
 

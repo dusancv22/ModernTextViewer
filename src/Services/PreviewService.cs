@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using System.Text;
 using Markdig;
 
 namespace ModernTextViewer.src.Services
 {
     /// <summary>
-    /// Service for converting markdown to HTML with theme support
+    /// Service for converting markdown to HTML with theme support and performance optimizations for large content
     /// </summary>
     public class PreviewService
     {
@@ -20,6 +23,10 @@ namespace ModernTextViewer.src.Services
         
         // New: Universal CSS with custom properties for dynamic theme switching
         private static readonly string _universalCSS = GenerateUniversalCSS();
+        
+        // Performance thresholds for large content optimization
+        private const int LARGE_CONTENT_THRESHOLD = 50000; // 50KB HTML threshold
+        private const int CHUNK_SIZE = 25000; // 25KB per chunk
 
         /// <summary>
         /// Converts markdown text to HTML using the cached Markdig pipeline.
@@ -165,19 +172,22 @@ namespace ModernTextViewer.src.Services
         /// <summary>
         /// Generates a complete HTML document with universal CSS that supports dynamic theme switching.
         /// This method creates an HTML document that can switch themes instantly via JavaScript without page reloads.
+        /// Includes performance optimizations for large content via lazy loading and content virtualization.
         /// </summary>
         /// <param name="markdownText">The markdown text to convert. Can be null or empty.</param>
         /// <param name="isDarkMode">Initial theme state. When true, starts with dark theme; when false, starts with light theme.</param>
         /// <returns>Complete HTML5 document with universal CSS and theme switching support</returns>
         /// <remarks>
-        /// This method is designed for performance-optimized theme switching. The generated HTML:
+        /// This method is designed for performance-optimized theme switching and large content handling. The generated HTML:
         /// <list type="bullet">
         /// <item>Uses CSS custom properties (variables) for all theme colors</item>
         /// <item>Includes smooth transitions between theme changes</item>
         /// <item>Supports instant theme switching via JavaScript</item>
         /// <item>Maintains full compatibility with all markdown elements</item>
         /// <item>Automatically sets the initial theme via data-theme attribute</item>
+        /// <item>Optimizes large content with progressive loading and content virtualization</item>
         /// </list>
+        /// For content larger than 50KB, implements lazy loading sections to improve initial render time.
         /// </remarks>
         public static string GenerateUniversalThemeHtml(string markdownText, bool isDarkMode)
         {
@@ -189,32 +199,260 @@ namespace ModernTextViewer.src.Services
             try
             {
                 string htmlContent = ConvertMarkdownToHtml(markdownText);
-                string themeAttribute = isDarkMode ? "dark" : "light";
                 
-                var htmlBuilder = new StringBuilder();
-                htmlBuilder.AppendLine("<!DOCTYPE html>");
-                htmlBuilder.AppendLine($"<html lang=\"en\" data-theme=\"{themeAttribute}\">");
-                htmlBuilder.AppendLine("<head>");
-                htmlBuilder.AppendLine("    <meta charset=\"UTF-8\">");
-                htmlBuilder.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
-                htmlBuilder.AppendLine("    <title>Markdown Preview</title>");
-                htmlBuilder.AppendLine("    <style>");
-                htmlBuilder.AppendLine(_universalCSS);
-                htmlBuilder.AppendLine("    </style>");
-                htmlBuilder.AppendLine("</head>");
-                htmlBuilder.AppendLine($"<body data-theme=\"{themeAttribute}\">");
-                htmlBuilder.AppendLine("    <div class=\"markdown-body\">");
-                htmlBuilder.AppendLine(htmlContent);
-                htmlBuilder.AppendLine("    </div>");
-                htmlBuilder.AppendLine("</body>");
-                htmlBuilder.AppendLine("</html>");
+                // Check if content is large and needs optimization
+                if (htmlContent.Length > LARGE_CONTENT_THRESHOLD)
+                {
+                    return GenerateOptimizedLargeContentHtml(htmlContent, isDarkMode);
+                }
                 
-                return htmlBuilder.ToString();
+                // Standard path for smaller content
+                return GenerateStandardUniversalHtml(htmlContent, isDarkMode);
             }
             catch (Exception ex)
             {
                 return GenerateErrorUniversalDocument(ex.Message, isDarkMode);
             }
+        }
+
+        /// <summary>
+        /// Generates optimized HTML for large content using progressive loading and content virtualization.
+        /// Splits large content into chunks and implements lazy loading to improve initial render performance.
+        /// </summary>
+        /// <param name="htmlContent">The converted HTML content (assumed to be large)</param>
+        /// <param name="isDarkMode">Theme state for initial rendering</param>
+        /// <returns>HTML document optimized for large content rendering</returns>
+        private static string GenerateOptimizedLargeContentHtml(string htmlContent, bool isDarkMode)
+        {
+            string themeAttribute = isDarkMode ? "dark" : "light";
+            
+            // Split content into logical chunks (by sections/headers when possible)
+            var chunks = SplitContentIntoChunks(htmlContent);
+            
+            var htmlBuilder = new StringBuilder();
+            htmlBuilder.AppendLine("<!DOCTYPE html>");
+            htmlBuilder.AppendLine($"<html lang=\"en\" data-theme=\"{themeAttribute}\">");
+            htmlBuilder.AppendLine("<head>");
+            htmlBuilder.AppendLine("    <meta charset=\"UTF-8\">");
+            htmlBuilder.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+            htmlBuilder.AppendLine("    <title>Markdown Preview</title>");
+            htmlBuilder.AppendLine("    <style>");
+            htmlBuilder.AppendLine(_universalCSS);
+            
+            // Add performance optimization CSS for large content
+            htmlBuilder.AppendLine(@"
+        /* Large Content Performance Optimizations */
+        .content-chunk {
+            contain: layout style paint;
+            transform: translateZ(0); /* Force hardware acceleration */
+        }
+        
+        .loading-chunk {
+            min-height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-color);
+            font-style: italic;
+            opacity: 0.7;
+        }
+        
+        .content-visible {
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }");
+            
+            htmlBuilder.AppendLine("    </style>");
+            htmlBuilder.AppendLine("</head>");
+            htmlBuilder.AppendLine($"<body data-theme=\"{themeAttribute}\">");
+            htmlBuilder.AppendLine("    <div class=\"markdown-body\">");
+            
+            // Render first chunk immediately, others as lazy-loaded sections
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                if (i == 0)
+                {
+                    // First chunk loads immediately
+                    htmlBuilder.AppendLine($"        <div class=\"content-chunk content-visible\" id=\"chunk-{i}\">");
+                    htmlBuilder.AppendLine(chunks[i]);
+                    htmlBuilder.AppendLine("        </div>");
+                }
+                else
+                {
+                    // Subsequent chunks use lazy loading placeholder
+                    htmlBuilder.AppendLine($"        <div class=\"content-chunk loading-chunk\" id=\"chunk-{i}\" data-content-index=\"{i}\">");
+                    htmlBuilder.AppendLine($"            <div>Loading section {i + 1}...</div>");
+                    htmlBuilder.AppendLine($"            <script type=\"application/json\" id=\"chunk-data-{i}\">{WebUtility.HtmlEncode(chunks[i])}</script>");
+                    htmlBuilder.AppendLine("        </div>");
+                }
+            }
+            
+            htmlBuilder.AppendLine("    </div>");
+            
+            // Add progressive loading JavaScript
+            htmlBuilder.AppendLine("    <script>");
+            htmlBuilder.AppendLine(GetProgressiveLoadingScript());
+            htmlBuilder.AppendLine("    </script>");
+            
+            htmlBuilder.AppendLine("</body>");
+            htmlBuilder.AppendLine("</html>");
+            
+            return htmlBuilder.ToString();
+        }
+        
+        /// <summary>
+        /// Generates standard HTML for normal-sized content without performance optimizations.
+        /// </summary>
+        /// <param name="htmlContent">The converted HTML content</param>
+        /// <param name="isDarkMode">Theme state for rendering</param>
+        /// <returns>Standard HTML document</returns>
+        private static string GenerateStandardUniversalHtml(string htmlContent, bool isDarkMode)
+        {
+            string themeAttribute = isDarkMode ? "dark" : "light";
+            
+            var htmlBuilder = new StringBuilder();
+            htmlBuilder.AppendLine("<!DOCTYPE html>");
+            htmlBuilder.AppendLine($"<html lang=\"en\" data-theme=\"{themeAttribute}\">");
+            htmlBuilder.AppendLine("<head>");
+            htmlBuilder.AppendLine("    <meta charset=\"UTF-8\">");
+            htmlBuilder.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+            htmlBuilder.AppendLine("    <title>Markdown Preview</title>");
+            htmlBuilder.AppendLine("    <style>");
+            htmlBuilder.AppendLine(_universalCSS);
+            htmlBuilder.AppendLine("    </style>");
+            htmlBuilder.AppendLine("</head>");
+            htmlBuilder.AppendLine($"<body data-theme=\"{themeAttribute}\">");
+            htmlBuilder.AppendLine("    <div class=\"markdown-body\">");
+            htmlBuilder.AppendLine(htmlContent);
+            htmlBuilder.AppendLine("    </div>");
+            htmlBuilder.AppendLine("</body>");
+            htmlBuilder.AppendLine("</html>");
+            
+            return htmlBuilder.ToString();
+        }
+        
+        /// <summary>
+        /// Splits large HTML content into logical chunks for progressive loading.
+        /// Attempts to split at section boundaries (h1, h2) when possible for better UX.
+        /// </summary>
+        /// <param name="htmlContent">The HTML content to split</param>
+        /// <returns>List of HTML content chunks</returns>
+        private static List<string> SplitContentIntoChunks(string htmlContent)
+        {
+            var chunks = new List<string>();
+            
+            // Try to split at logical boundaries (headers) first
+            var headerSplits = System.Text.RegularExpressions.Regex.Split(
+                htmlContent, 
+                @"(<h[12][^>]*>.*?</h[12]>)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            ).Where(s => !string.IsNullOrEmpty(s)).ToArray();
+            
+            if (headerSplits.Length > 1)
+            {
+                // Split by headers worked, group into appropriately sized chunks
+                var currentChunk = new StringBuilder();
+                
+                foreach (var section in headerSplits)
+                {
+                    if (currentChunk.Length + section.Length > CHUNK_SIZE && currentChunk.Length > 0)
+                    {
+                        chunks.Add(currentChunk.ToString());
+                        currentChunk.Clear();
+                    }
+                    currentChunk.Append(section);
+                }
+                
+                if (currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString());
+                }
+            }
+            else
+            {
+                // Fallback to simple character-based chunking
+                for (int i = 0; i < htmlContent.Length; i += CHUNK_SIZE)
+                {
+                    int chunkLength = Math.Min(CHUNK_SIZE, htmlContent.Length - i);
+                    chunks.Add(htmlContent.Substring(i, chunkLength));
+                }
+            }
+            
+            return chunks.Count > 0 ? chunks : new List<string> { htmlContent };
+        }
+        
+        /// <summary>
+        /// Generates JavaScript for progressive content loading and intersection observer optimization.
+        /// </summary>
+        /// <returns>JavaScript code for progressive loading functionality</returns>
+        private static string GetProgressiveLoadingScript()
+        {
+            return @"
+        (function() {
+            'use strict';
+            
+            // Progressive loading with Intersection Observer for performance
+            const observerOptions = {
+                root: null,
+                rootMargin: '100px',
+                threshold: 0.1
+            };
+            
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const element = entry.target;
+                        const contentIndex = element.dataset.contentIndex;
+                        
+                        if (contentIndex && element.classList.contains('loading-chunk')) {
+                            loadChunkContent(element, contentIndex);
+                            observer.unobserve(element);
+                        }
+                    }
+                });
+            }, observerOptions);
+            
+            function loadChunkContent(element, index) {
+                try {
+                    const dataScript = document.getElementById('chunk-data-' + index);
+                    if (dataScript) {
+                        const content = JSON.parse(dataScript.textContent);
+                        
+                        // Replace loading content with actual content
+                        element.innerHTML = content;
+                        element.classList.remove('loading-chunk');
+                        element.classList.add('content-visible');
+                        
+                        // Clean up data script
+                        dataScript.remove();
+                    }
+                } catch (error) {
+                    console.warn('Failed to load chunk content:', error);
+                    element.innerHTML = '<div style=""color: var(--text-color); text-align: center; padding: 20px;"">Failed to load content section</div>';
+                }
+            }
+            
+            // Observe all loading chunks
+            document.querySelectorAll('.loading-chunk').forEach(chunk => {
+                observer.observe(chunk);
+            });
+            
+            // Fallback: load all remaining chunks after 5 seconds if not loaded
+            setTimeout(() => {
+                document.querySelectorAll('.loading-chunk').forEach(chunk => {
+                    const contentIndex = chunk.dataset.contentIndex;
+                    if (contentIndex) {
+                        loadChunkContent(chunk, contentIndex);
+                        observer.unobserve(chunk);
+                    }
+                });
+            }, 5000);
+        })();
+        ";
         }
 
         #region Private Helper Methods

@@ -32,7 +32,8 @@
       "Bash(dotnet clean:*)",
       "Bash(del:*)",
       "Bash(rm:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(dir:*)"
     ],
     "deny": []
   }

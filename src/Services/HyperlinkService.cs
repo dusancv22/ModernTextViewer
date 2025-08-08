@@ -243,5 +243,28 @@ namespace ModernTextViewer.src.Services
             // Allow any non-empty URL - browsers will handle protocol addition automatically
             return !string.IsNullOrWhiteSpace(url);
         }
+        
+        // Optimized method for FileService to avoid code duplication
+        public static List<HyperlinkModel> DeserializeHyperlinks(string metadataJson)
+        {
+            var metadataList = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(metadataJson);
+            var hyperlinks = new List<HyperlinkModel>();
+
+            if (metadataList != null)
+            {
+                foreach (var item in metadataList)
+                {
+                    hyperlinks.Add(new HyperlinkModel
+                    {
+                        StartIndex = item["start"].GetInt32(),
+                        Length = item["length"].GetInt32(),
+                        Url = item["url"].GetString() ?? string.Empty,
+                        DisplayText = item["text"].GetString() ?? string.Empty
+                    });
+                }
+            }
+
+            return hyperlinks;
+        }
     }
 }
