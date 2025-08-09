@@ -5,13 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 ModernTextViewer is a Windows Forms application built with .NET 8.0 that provides a modern text viewing and editing experience with features including:
-- Dark/light mode support
-- Auto-save functionality
+- Dark/light mode support with instant theme switching (<500ms)
+- Auto-save functionality (5-minute intervals)
 - Support for multiple file formats (.txt, .srt, .md, .markdown)
-- Preview/raw mode toggle for markdown files with real-time HTML rendering
-- Custom window controls and styling
-- Font size adjustments via keyboard shortcuts
-- WebView2-powered markdown preview with theme-aware styling
+- Preview/raw mode toggle for markdown files with WebView2-powered HTML rendering
+- Custom borderless window with P/Invoke-based dragging and resizing
+- Font customization and zoom controls (Ctrl+Plus/Minus, Ctrl+Scroll)
+- Find/Replace dialog with regex support
+- Hyperlink management with Ctrl+K shortcut
 
 ## Build and Development Commands
 
@@ -27,136 +28,120 @@ dotnet build -c Release
 
 # Clean build artifacts
 dotnet clean
+
+# Publish for Windows (single file)
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
 ## Architecture
 
-The application follows a Model-View-Service pattern:
+The application follows a Model-View-Service pattern with these key components:
 
-- **Entry Point**: `Program.cs` - Initializes Windows Forms and launches `MainForm`
-- **Main UI**: `src/Forms/MainForm.cs` - The primary form handling all UI interactions, window management, user input, and WebView2 integration for markdown preview
-- **Data Model**: `src/Models/DocumentModel.cs` - Manages document state, content, dirty tracking, and preview mode state
-- **File Operations**: `src/Services/FileService.cs` - Handles async file loading/saving with proper encoding and line ending normalization
-- **Preview Service**: `src/Services/PreviewService.cs` - Converts markdown to HTML with theme-aware styling for WebView2 rendering
-- **Custom Controls**: `src/Controls/CustomToolbar.cs` - Custom toolbar implementations
+### Core Structure
+- **Entry Point**: `Program.cs` - Initializes Windows Forms and launches MainForm
+- **Main UI**: `src/Forms/MainForm.cs` (~2000 lines) - Central form handling all UI interactions, window management, keyboard shortcuts, and WebView2 integration
+- **Data Model**: `src/Models/DocumentModel.cs` - Document state management including content, dirty tracking, preview mode state, and file metadata
+- **Services**:
+  - `FileService.cs` - Async file I/O with UTF-8 encoding (no BOM) and line ending normalization
+  - `PreviewService.cs` - Markdown-to-HTML conversion with theme-aware CSS generation
+  - `HyperlinkService.cs` - Hyperlink detection and management for rich text
+
+### Window Management Architecture
+- Custom borderless window using P/Invoke for `SendMessage` API
+- Manual implementation of window dragging (title bar) and resizing (border detection)
+- Resize border detection with 8-pixel zones on all edges
+- Custom minimize/maximize/close buttons with hover effects
+
+### WebView2 Integration
+- Lazy initialization on first markdown preview request
+- 10-second initialization timeout with error handling
+- JavaScript injection for instant theme switching without page reloads
+- Cached CSS generation for performance optimization
+- Fallback to full HTML regeneration if JavaScript injection fails
 
 ## Key Implementation Details
 
-1. **Window Management**: Uses P/Invoke for custom window handling (dragging, resizing)
-2. **Auto-save**: Timer-based auto-save every 5 minutes when document is dirty
-3. **File Handling**: UTF-8 encoding without BOM, normalizes line endings to system default
-4. **Font Scaling**: Ctrl+Plus/Minus for zoom, range 4-96pt
-5. **Dark Mode**: Default enabled, toggleable via UI button
-6. **Preview Mode**: Real-time markdown-to-HTML conversion using Markdig library
-7. **WebView2 Integration**: Lazy initialization for markdown preview with comprehensive error handling
-8. **Theme Synchronization**: Preview mode automatically adapts to current dark/light theme
+### Critical Code Patterns
 
-## Dependencies
+1. **Null Reference Warning**: Line 1350 in MainForm.cs has a CS8602 warning - needs null check
+2. **Assembly Version Conflict**: WebView2 causes WindowsBase version conflicts (4.0.0.0 vs 5.0.0.0) - currently resolved by preferring 4.0.0.0
+3. **Undo/Redo System**: Custom stack-based implementation tracking text, hyperlinks, and selection state
+4. **Auto-save Timer**: 5-minute interval, only triggers when document.IsDirty is true
+5. **Font Size Constraints**: 4pt minimum, 96pt maximum, enforced in zoom operations
 
-The project uses the following key dependencies:
-- **Markdig v0.41.3**: Markdown parsing and HTML conversion with advanced extensions support
-- **Microsoft.Web.WebView2 v1.0.3351.48**: Modern web browser control for HTML rendering in preview mode
+### Event Handling Flow
+1. Text changes trigger `TextBox_TextChanged` → sets document dirty → updates status bar
+2. Keyboard shortcuts handled in `MainForm_KeyDown` with modifier key checks
+3. WebView2 navigation events managed asynchronously with proper error boundaries
+4. Timer-based debouncing for hyperlink updates (250ms delay)
+
+### Theme System
+- Dark mode colors: Background #1E1E1E, Foreground #DCDCDC, Toolbar #2D2D2D
+- Light mode colors: System defaults (Control, ControlText)
+- Preview mode uses CSS custom properties for instant switching
+- JavaScript-based theme updates via `ExecuteScriptAsync()`
+
+## Dependencies and Requirements
+
+### NuGet Packages
+- **Markdig v0.41.3**: Full-featured markdown parser with GitHub-flavored markdown support
+- **Microsoft.Web.WebView2 v1.0.3351.48**: Chromium-based web view for HTML rendering
 
 ### System Requirements
 - .NET 8.0 Windows Runtime
-- WebView2 Runtime (automatically installed on Windows 10/11, or can be downloaded from Microsoft)
-- Windows 10 version 1809 or later (for WebView2 support)
+- Windows 10 version 1809+ (for WebView2)
+- WebView2 Runtime (auto-installed on Windows 10/11)
 
-## Testing
+## Common Development Tasks
 
-Currently no automated tests are configured. Manual testing recommended for:
-- File operations (open, save, auto-save)
-- UI responsiveness and dark/light mode switching
-- Keyboard shortcuts
-- Window resize and drag operations
-- **Preview Mode Functionality**:
-  - Toggle between raw and preview modes for markdown files (.md, .markdown)
-  - Content synchronization when switching between modes
-  - Theme switching while in preview mode
-  - WebView2 initialization and error handling
-  - Markdown rendering accuracy with various content types (headers, lists, code blocks, tables, etc.)
+### Adding New Keyboard Shortcuts
+1. Add case in `MainForm_KeyDown` method
+2. Check for modifier keys (e.Control, e.Shift, e.Alt)
+3. Set `e.Handled = true` to prevent bubbling
+4. Update README.md keyboard shortcuts table
 
-## Troubleshooting
+### Modifying Theme Colors
+1. Update color definitions in MainForm constructor
+2. Modify `ApplyTheme()` method for UI elements
+3. Update `PreviewService.GenerateCss()` for preview mode
+4. Test theme switching in both raw and preview modes
 
-### WebView2 Issues
-
-**Problem**: Preview mode fails to initialize or shows blank content
-- **Solution**: Ensure WebView2 Runtime is installed. Download from Microsoft's official website if missing.
-- **Diagnostic**: Check Windows Event Viewer for WebView2-related errors.
-
-**Problem**: Preview mode times out during initialization
-- **Cause**: WebView2 initialization timeout (10-second limit) or system configuration issues.
-- **Solution**: Restart the application. If problem persists, reinstall WebView2 Runtime.
-
-**Problem**: Preview not updating when switching themes
-- **Cause**: WebView2 CoreWebView2 not properly initialized.
-- **Solution**: Switch back to raw mode and then to preview mode again.
+### Working with WebView2
+1. Always check `isWebViewInitialized` before WebView2 operations
+2. Use try-catch around all WebView2 async operations
+3. Implement timeouts for initialization (see `InitializeWebView()`)
+4. Test with WebView2 Runtime uninstalled to verify error handling
 
 ### File Format Support
+1. Check extension in `IsMarkdownFile()` method
+2. Preview mode only activates for .md/.markdown files
+3. All text operations work on any text-based file
+4. Binary file detection not implemented - will corrupt binary files
 
-**Markdown Preview**: Only available for files with `.md` or `.markdown` extensions.
-**Fallback Behavior**: Non-markdown files automatically stay in raw text mode.
+## Known Issues and Workarounds
+
+### Build Warnings
+- **CS8602 at line 1350**: Possible null reference - add null check to `webView.CoreWebView2`
+- **MSB3277**: Assembly version conflicts - safe to ignore, resolved at runtime
+
+### WebView2 Initialization
+- First-time initialization takes 2-3 seconds
+- Timeout after 10 seconds triggers fallback to raw mode
+- Memory usage increases by ~30-50MB when preview active
 
 ### Performance Considerations
+- Large files (8000+ words) previously caused freezes - fixed in recent commits
+- Preview mode CSS cached after first generation
+- Theme switching optimized to <500ms using JavaScript injection
 
-**Large Files**: WebView2 initialization adds ~2-3 seconds for first-time preview mode activation.
-**Memory Usage**: Preview mode uses additional memory for WebView2 process (~30-50MB).
-**Optimization**: CSS and markdown pipeline are cached for better performance.
+## Testing Checklist
 
-## Agent Usage Guidelines
-
-This project includes a comprehensive agent system for specialized development tasks. Full documentation is available in `agents.md`.
-
-### How to Use Agents
-
-When you need specialized assistance, use the Task tool with the appropriate `subagent_type` parameter. For example:
-- Use `architect` agent for planning new features or breaking down complex tasks
-- Use `code-writer` agent for implementing features in C# and Windows Forms
-- Use `debugger` agent for investigating issues in the application
-- Use `test-writer` agent for creating test cases (when testing framework is established)
-- Use `web-search` agent for finding online documentation, tutorials, or current best practices
-
-### Quick Agent Reference for ModernTextViewer Development
-
-| Agent | Primary Use Case | Example Tasks |
-|-------|------------------|---------------|
-| **architect** | Planning features | "Plan implementation of find/replace functionality" |
-| **code-writer** | C# implementation | "Add keyboard shortcut for find dialog", "Implement text search highlighting" |
-| **code-reviewer** | Quality checks | "Review the new file handling implementation" |
-| **debugger** | Bug fixes | "Fix auto-save not triggering", "Investigate UI freezing issue" |
-| **documentation-writer** | Documentation | "Update README with new features", "Add XML comments to public methods" |
-| **git-manager** | Version control | "Create commit for find/replace feature" |
-| **web-search** | Online research | "Find Windows Forms best practices", "Search for .NET 8 text editor examples" |
-
-### Common Workflows for ModernTextViewer
-
-1. **Adding New Features:**
-   - Start with `architect` to plan the implementation
-   - Use `code-writer` to implement in MainForm.cs or create new forms/services
-   - Have `code-reviewer` check the implementation
-   - Use `git-manager` for commits
-
-2. **Fixing Bugs:**
-   - Use `debugger` to investigate the issue
-   - Use `code-writer` to implement the fix
-   - Have `code-reviewer` verify the solution
-
-3. **UI Enhancements:**
-   - Use `architect` for complex UI changes
-   - Use `code-writer` for Windows Forms implementation
-   - Consider dark/light mode compatibility
-
-4. **Researching Solutions:**
-   - Use `web-search` to find current documentation or examples
-   - Use `web-search` for Windows Forms best practices
-   - Use `web-search` when encountering unfamiliar .NET APIs or error messages
-
-### Best Practices
-
-- Always start with `architect` for features requiring multiple file changes
-- Use `code-writer` for all C# and Windows Forms implementations
-- Ensure compatibility with existing features (dark mode, auto-save, keyboard shortcuts)
-- Follow the established Model-View-Service pattern
-- Consider P/Invoke implications for custom window handling features
-
-For complete agent documentation and advanced usage, refer to `agents.md`.
+When making changes, verify:
+1. Dark/light mode switching works in both raw and preview modes
+2. Keyboard shortcuts function correctly with proper modifier keys
+3. Auto-save triggers after 5 minutes when document is dirty
+4. Find/Replace works with case sensitivity and whole word options
+5. Preview mode renders markdown correctly with tables, code blocks, lists
+6. Window can be dragged by title bar and resized from all edges
+7. Font dialog changes apply to text and persist across sessions
+8. Hyperlinks open in default browser when clicked

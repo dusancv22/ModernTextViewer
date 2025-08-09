@@ -33,7 +33,10 @@
       "Bash(del:*)",
       "Bash(rm:*)",
       "Bash(git branch:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(git tag:*)",
+      "Bash(gh release list:*)",
+      "Bash(gh release view:*)"
     ],
     "deny": []
   }
