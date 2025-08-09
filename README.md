@@ -28,6 +28,10 @@ A modern, feature-rich text editor for Windows with a clean interface, dark mode
   - **Instant Theme Switching**: Themes change instantly in preview mode without page reloads
   - **Advanced Rendering**: GitHub-style CSS with full markdown extensions support (tables, code blocks, task lists)
   - **Smart Content Sync**: Seamless switching between raw text and formatted preview
+- **PDF Export**: Export markdown files as PDF with optimized print formatting (Ctrl+P)
+  - **Print-Optimized Output**: Clean, professional PDF layout using WebView2's native print dialog
+  - **Automatic Preview Mode**: Seamlessly switches to preview mode for export if needed
+  - **Markdown Files Only**: Available exclusively for .md and .markdown files
 - **Hyperlink Support**: Add, edit, and navigate hyperlinks (Ctrl+K)
 - **Auto-Save**: Automatic saving every 5 minutes with visual status indicator
 - **Multi-Format Support**: Open and save .txt, .srt (subtitle), and .md (markdown) files
@@ -51,6 +55,7 @@ Experience the power of instant markdown preview with seamless switching between
 | Quick Save | Ctrl+S (when file is open) |
 | Find/Replace | Ctrl+F |
 | Add/Edit Hyperlink | Ctrl+K |
+| PDF Export | Ctrl+P |
 | Bold | Ctrl+B |
 | Italic | Ctrl+I |
 | Underline | Ctrl+U |
@@ -124,6 +129,13 @@ See the revolutionary performance improvement in real-time - themes switch insta
 ### Opening Files
 1. **Drag and Drop**: Simply drag any supported file into the window
 2. **Using Save Dialog**: Click the 💾+ button to open a file through the save dialog
+
+### PDF Export (Markdown Files)
+1. Open any `.md` or `.markdown` file
+2. Press Ctrl+P or click the 📄 button in the toolbar
+3. The application will automatically switch to preview mode if needed
+4. Use the native print dialog to save as PDF with optimized formatting
+5. **Note**: PDF export is only available for markdown files
 
 ### Text Formatting
 1. Select the text you want to format

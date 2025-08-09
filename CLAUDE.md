@@ -9,6 +9,7 @@ ModernTextViewer is a Windows Forms application built with .NET 8.0 that provide
 - Auto-save functionality (5-minute intervals)
 - Support for multiple file formats (.txt, .srt, .md, .markdown)
 - Preview/raw mode toggle for markdown files with WebView2-powered HTML rendering
+- PDF export functionality for markdown files using WebView2's native print dialog
 - Custom borderless window with P/Invoke-based dragging and resizing
 - Font customization and zoom controls (Ctrl+Plus/Minus, Ctrl+Scroll)
 - Find/Replace dialog with regex support
@@ -58,6 +59,8 @@ The application follows a Model-View-Service pattern with these key components:
 - JavaScript injection for instant theme switching without page reloads
 - Cached CSS generation for performance optimization
 - Fallback to full HTML regeneration if JavaScript injection fails
+- Native print dialog integration via ShowPrintUI() for PDF export
+- Print-optimized CSS styling for clean PDF output
 
 ## Key Implementation Details
 
@@ -100,6 +103,16 @@ The application follows a Model-View-Service pattern with these key components:
 3. Set `e.Handled = true` to prevent bubbling
 4. Update README.md keyboard shortcuts table
 
+### PDF Export Implementation
+- **Toolbar Integration**: PDF export button (📄) positioned between hyperlink and theme buttons
+- **File Type Detection**: Uses `IsMarkdownFile()` method to check .md/.markdown extensions
+- **Button State Management**: `UpdatePdfExportButtonState()` enables/disables button based on file type
+- **Export Handler**: `PdfExportButton_Click` automatically switches to preview mode if needed
+- **WebView2 Integration**: Calls `ShowPrintUI()` method for native Windows print dialog
+- **Print CSS**: Enhanced PreviewService with print-optimized styles for better PDF output
+- **Keyboard Shortcut**: Ctrl+P triggers PDF export (handled in MainForm_KeyDown)
+- **Error Handling**: Proper error boundaries for WebView2 print operations
+
 ### Modifying Theme Colors
 1. Update color definitions in MainForm constructor
 2. Modify `ApplyTheme()` method for UI elements
@@ -115,8 +128,9 @@ The application follows a Model-View-Service pattern with these key components:
 ### File Format Support
 1. Check extension in `IsMarkdownFile()` method
 2. Preview mode only activates for .md/.markdown files
-3. All text operations work on any text-based file
-4. Binary file detection not implemented - will corrupt binary files
+3. PDF export only available for .md/.markdown files
+4. All text operations work on any text-based file
+5. Binary file detection not implemented - will corrupt binary files
 
 ## Known Issues and Workarounds
 
@@ -142,6 +156,8 @@ When making changes, verify:
 3. Auto-save triggers after 5 minutes when document is dirty
 4. Find/Replace works with case sensitivity and whole word options
 5. Preview mode renders markdown correctly with tables, code blocks, lists
-6. Window can be dragged by title bar and resized from all edges
-7. Font dialog changes apply to text and persist across sessions
-8. Hyperlinks open in default browser when clicked
+6. PDF export button is enabled only for markdown files
+7. PDF export automatically switches to preview mode and opens print dialog
+8. Window can be dragged by title bar and resized from all edges
+9. Font dialog changes apply to text and persist across sessions
+10. Hyperlinks open in default browser when clicked
