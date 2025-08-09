@@ -551,10 +551,10 @@ namespace ModernTextViewer.src.Forms
             bottomToolbar.Controls.Add(previewToggleButton);
             bottomToolbar.Controls.Add(pdfExportButton);
             
-            // Right-aligned controls (added in reverse order for right dock)
-            bottomToolbar.Controls.Add(autoSaveLabel);      // Will appear rightmost
-            bottomToolbar.Controls.Add(themeToggleButton);  // Will appear next to word count
+            // Right-aligned controls (correct order for right dock)
             bottomToolbar.Controls.Add(wordCountLabel);     // Will appear leftmost of right-aligned items
+            bottomToolbar.Controls.Add(themeToggleButton);  // Will appear in the middle
+            bottomToolbar.Controls.Add(autoSaveLabel);      // Will appear rightmost
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();
