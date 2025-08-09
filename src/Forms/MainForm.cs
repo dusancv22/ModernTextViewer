@@ -499,11 +499,11 @@ namespace ModernTextViewer.src.Forms
                 Text = isDarkMode ? "☀️" : "🌙",
                 Width = 30,
                 Height = 20,
-                Dock = DockStyle.Right,  // Changed to right alignment
+                Dock = DockStyle.Right,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 10),
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0, 0, 5, 0),  // Add right margin for spacing
+                Margin = new Padding(0, 0, 5, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
             };
 
@@ -521,7 +521,7 @@ namespace ModernTextViewer.src.Forms
                 Dock = DockStyle.Right,
                 AutoSize = true,
                 TextAlign = ContentAlignment.MiddleRight,
-                Padding = new Padding(5, 5, 10, 5), // Extra right padding for spacing from autoSaveLabel
+                Padding = new Padding(5, 5, 10, 5),
                 ForeColor = isDarkMode ? darkForeColor : Color.Gray
             };
 
@@ -541,20 +541,19 @@ namespace ModernTextViewer.src.Forms
             saveButton.Click += SaveButton_Click;
             quickSaveButton.Click += QuickSaveButton_Click;
             
-            // Reorganized button order:
-            // 1. Open, 2. Save As, 3. Quick Save, 4. Font, 5. Hyperlink, 6. Preview Toggle, 7. PDF Export
-            bottomToolbar.Controls.Add(openButton);
-            bottomToolbar.Controls.Add(saveButton);
-            bottomToolbar.Controls.Add(quickSaveButton);
-            bottomToolbar.Controls.Add(fontButton);
-            bottomToolbar.Controls.Add(hyperlinkButton);
-            bottomToolbar.Controls.Add(previewToggleButton);
-            bottomToolbar.Controls.Add(pdfExportButton);
+            // Left-side buttons - Final order after swaps
+            bottomToolbar.Controls.Add(pdfExportButton);    // PDF Export
+            bottomToolbar.Controls.Add(previewToggleButton); // Preview Toggle (swapped with Save As)
+            bottomToolbar.Controls.Add(hyperlinkButton);    // Hyperlink (swapped with Quick Save)
+            bottomToolbar.Controls.Add(fontButton);         // Font
+            bottomToolbar.Controls.Add(quickSaveButton);    // Quick Save (swapped with Hyperlink)
+            bottomToolbar.Controls.Add(saveButton);         // Save As (swapped with Preview Toggle)
+            bottomToolbar.Controls.Add(openButton);         // Open
             
-            // Right-aligned controls (reverse order for right dock - last added appears leftmost)
-            bottomToolbar.Controls.Add(autoSaveLabel);      // Will appear rightmost
-            bottomToolbar.Controls.Add(themeToggleButton);  // Will appear in the middle
-            bottomToolbar.Controls.Add(wordCountLabel);     // Will appear leftmost
+            // Right-side controls (keeping original order for now)
+            bottomToolbar.Controls.Add(autoSaveLabel);
+            bottomToolbar.Controls.Add(themeToggleButton);
+            bottomToolbar.Controls.Add(wordCountLabel);
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();

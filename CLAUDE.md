@@ -104,7 +104,7 @@ The application follows a Model-View-Service pattern with these key components:
 4. Update README.md keyboard shortcuts table
 
 ### PDF Export Implementation
-- **Toolbar Integration**: PDF export button (📄) positioned between hyperlink and theme buttons
+- **Toolbar Integration**: PDF export button (📄) positioned first in the toolbar (leftmost position)
 - **File Type Detection**: Uses `IsMarkdownFile()` method to check .md/.markdown extensions
 - **Button State Management**: `UpdatePdfExportButtonState()` enables/disables button based on file type
 - **Export Handler**: `PdfExportButton_Click` automatically switches to preview mode if needed
@@ -131,6 +131,17 @@ The application follows a Model-View-Service pattern with these key components:
 3. PDF export only available for .md/.markdown files
 4. All text operations work on any text-based file
 5. Binary file detection not implemented - will corrupt binary files
+
+### Toolbar Organization
+Current toolbar button order (left to right):
+1. PDF Export (📄) - Available for markdown files only
+2. Preview Toggle (👁️/📝) - Raw/preview mode switching  
+3. Hyperlink (🔗) - Add/edit hyperlinks
+4. Font (A) - Font customization dialog
+5. Quick Save (💾) - Save current file
+6. Save As (💾+) - Save with new filename
+7. Open (📁) - Open file dialog
+Right side: Word Count | Theme Toggle (🌙/☀️) | Auto-save Status
 
 ## Known Issues and Workarounds
 
