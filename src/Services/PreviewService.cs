@@ -730,6 +730,205 @@ namespace ModernTextViewer.src.Services
         .markdown-body .task-list-item-checkbox {
             margin: 0 0.2em 0.25em -1.6em;
             vertical-align: middle;
+        }
+
+        /* Print-optimized CSS for PDF output */
+        @media print {
+            html, body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+                line-height: 1.4;
+                margin: 0;
+                padding: 0;
+            }
+            
+            .markdown-body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+                line-height: 1.4;
+                padding: 20px;
+                min-height: auto;
+                box-shadow: none;
+            }
+            
+            /* Headers with proper spacing */
+            .markdown-body h1, .markdown-body h2, .markdown-body h3,
+            .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+                color: black !important;
+                page-break-after: avoid;
+                margin-top: 18pt;
+                margin-bottom: 12pt;
+            }
+            
+            .markdown-body h1 {
+                font-size: 18pt;
+                border-bottom: 2pt solid black;
+                padding-bottom: 6pt;
+            }
+            
+            .markdown-body h2 {
+                font-size: 16pt;
+                border-bottom: 1pt solid black;
+                padding-bottom: 4pt;
+            }
+            
+            .markdown-body h3 {
+                font-size: 14pt;
+            }
+            
+            .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+                font-size: 12pt;
+            }
+            
+            /* Text elements */
+            .markdown-body p {
+                color: black !important;
+                margin-bottom: 12pt;
+                orphans: 3;
+                widows: 3;
+            }
+            
+            .markdown-body strong {
+                color: black !important;
+                font-weight: bold;
+            }
+            
+            .markdown-body em {
+                font-style: italic;
+            }
+            
+            /* Links - show URLs in print */
+            .markdown-body a {
+                color: black !important;
+                text-decoration: underline;
+            }
+            
+            /* Code blocks - prevent page breaks */
+            .markdown-body code {
+                background-color: #f5f5f5 !important;
+                color: black !important;
+                border: 1pt solid #ccc;
+                padding: 2pt 4pt;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+            }
+            
+            .markdown-body pre {
+                background-color: #f9f9f9 !important;
+                color: black !important;
+                border: 1pt solid #ccc;
+                padding: 12pt;
+                margin-bottom: 12pt;
+                page-break-inside: avoid;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+                line-height: 1.3;
+                overflow: visible;
+                white-space: pre-wrap;
+            }
+            
+            .markdown-body pre code {
+                background-color: transparent !important;
+                border: none;
+                padding: 0;
+            }
+            
+            /* Blockquotes - prevent page breaks */
+            .markdown-body blockquote {
+                color: #333 !important;
+                background-color: #f9f9f9 !important;
+                border-left: 4pt solid #ccc;
+                margin: 12pt 0;
+                padding: 8pt 12pt;
+                page-break-inside: avoid;
+                font-style: italic;
+            }
+            
+            /* Tables - optimize for print */
+            .markdown-body table {
+                border-collapse: collapse;
+                width: 100%;
+                margin-bottom: 12pt;
+                border: 1pt solid black;
+                page-break-inside: avoid;
+            }
+            
+            .markdown-body table th,
+            .markdown-body table td {
+                border: 1pt solid black;
+                padding: 6pt 8pt;
+                text-align: left;
+                color: black !important;
+                background-color: white !important;
+            }
+            
+            .markdown-body table th {
+                background-color: #f0f0f0 !important;
+                font-weight: bold;
+            }
+            
+            .markdown-body table tr:nth-child(even) {
+                background-color: #f9f9f9 !important;
+            }
+            
+            .markdown-body table tr:hover {
+                background-color: inherit !important;
+            }
+            
+            /* Lists */
+            .markdown-body ul, .markdown-body ol {
+                margin-bottom: 12pt;
+            }
+            
+            .markdown-body li {
+                margin-bottom: 4pt;
+            }
+            
+            /* Horizontal rules */
+            .markdown-body hr {
+                background-color: black !important;
+                border: none;
+                height: 1pt;
+                margin: 18pt 0;
+                page-break-after: avoid;
+            }
+            
+            /* Images */
+            .markdown-body img {
+                max-width: 100%;
+                height: auto;
+                page-break-inside: avoid;
+                margin: 12pt 0;
+            }
+            
+            /* Hide UI elements that shouldn't appear in print */
+            .no-print {
+                display: none !important;
+            }
+            
+            /* Task lists */
+            .markdown-body .task-list-item {
+                list-style-type: none;
+            }
+            
+            .markdown-body .task-list-item-checkbox {
+                margin-right: 6pt;
+            }
+            
+            /* Page break helpers */
+            .page-break-before {
+                page-break-before: always;
+            }
+            
+            .page-break-after {
+                page-break-after: always;
+            }
+            
+            .no-page-break {
+                page-break-inside: avoid;
+            }
         }";
         }
 
@@ -926,6 +1125,205 @@ namespace ModernTextViewer.src.Services
         .markdown-body .task-list-item-checkbox {
             margin: 0 0.2em 0.25em -1.6em;
             vertical-align: middle;
+        }
+
+        /* Print-optimized CSS for PDF output */
+        @media print {
+            html, body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+                line-height: 1.4;
+                margin: 0;
+                padding: 0;
+            }
+            
+            .markdown-body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+                line-height: 1.4;
+                padding: 20px;
+                min-height: auto;
+                box-shadow: none;
+            }
+            
+            /* Headers with proper spacing */
+            .markdown-body h1, .markdown-body h2, .markdown-body h3,
+            .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+                color: black !important;
+                page-break-after: avoid;
+                margin-top: 18pt;
+                margin-bottom: 12pt;
+            }
+            
+            .markdown-body h1 {
+                font-size: 18pt;
+                border-bottom: 2pt solid black;
+                padding-bottom: 6pt;
+            }
+            
+            .markdown-body h2 {
+                font-size: 16pt;
+                border-bottom: 1pt solid black;
+                padding-bottom: 4pt;
+            }
+            
+            .markdown-body h3 {
+                font-size: 14pt;
+            }
+            
+            .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+                font-size: 12pt;
+            }
+            
+            /* Text elements */
+            .markdown-body p {
+                color: black !important;
+                margin-bottom: 12pt;
+                orphans: 3;
+                widows: 3;
+            }
+            
+            .markdown-body strong {
+                color: black !important;
+                font-weight: bold;
+            }
+            
+            .markdown-body em {
+                font-style: italic;
+            }
+            
+            /* Links - show URLs in print */
+            .markdown-body a {
+                color: black !important;
+                text-decoration: underline;
+            }
+            
+            /* Code blocks - prevent page breaks */
+            .markdown-body code {
+                background-color: #f5f5f5 !important;
+                color: black !important;
+                border: 1pt solid #ccc;
+                padding: 2pt 4pt;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+            }
+            
+            .markdown-body pre {
+                background-color: #f9f9f9 !important;
+                color: black !important;
+                border: 1pt solid #ccc;
+                padding: 12pt;
+                margin-bottom: 12pt;
+                page-break-inside: avoid;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+                line-height: 1.3;
+                overflow: visible;
+                white-space: pre-wrap;
+            }
+            
+            .markdown-body pre code {
+                background-color: transparent !important;
+                border: none;
+                padding: 0;
+            }
+            
+            /* Blockquotes - prevent page breaks */
+            .markdown-body blockquote {
+                color: #333 !important;
+                background-color: #f9f9f9 !important;
+                border-left: 4pt solid #ccc;
+                margin: 12pt 0;
+                padding: 8pt 12pt;
+                page-break-inside: avoid;
+                font-style: italic;
+            }
+            
+            /* Tables - optimize for print */
+            .markdown-body table {
+                border-collapse: collapse;
+                width: 100%;
+                margin-bottom: 12pt;
+                border: 1pt solid black;
+                page-break-inside: avoid;
+            }
+            
+            .markdown-body table th,
+            .markdown-body table td {
+                border: 1pt solid black;
+                padding: 6pt 8pt;
+                text-align: left;
+                color: black !important;
+                background-color: white !important;
+            }
+            
+            .markdown-body table th {
+                background-color: #f0f0f0 !important;
+                font-weight: bold;
+            }
+            
+            .markdown-body table tr:nth-child(even) {
+                background-color: #f9f9f9 !important;
+            }
+            
+            .markdown-body table tr:hover {
+                background-color: inherit !important;
+            }
+            
+            /* Lists */
+            .markdown-body ul, .markdown-body ol {
+                margin-bottom: 12pt;
+            }
+            
+            .markdown-body li {
+                margin-bottom: 4pt;
+            }
+            
+            /* Horizontal rules */
+            .markdown-body hr {
+                background-color: black !important;
+                border: none;
+                height: 1pt;
+                margin: 18pt 0;
+                page-break-after: avoid;
+            }
+            
+            /* Images */
+            .markdown-body img {
+                max-width: 100%;
+                height: auto;
+                page-break-inside: avoid;
+                margin: 12pt 0;
+            }
+            
+            /* Hide UI elements that shouldn't appear in print */
+            .no-print {
+                display: none !important;
+            }
+            
+            /* Task lists */
+            .markdown-body .task-list-item {
+                list-style-type: none;
+            }
+            
+            .markdown-body .task-list-item-checkbox {
+                margin-right: 6pt;
+            }
+            
+            /* Page break helpers */
+            .page-break-before {
+                page-break-before: always;
+            }
+            
+            .page-break-after {
+                page-break-after: always;
+            }
+            
+            .no-page-break {
+                page-break-inside: avoid;
+            }
         }";
         }
 
@@ -1267,6 +1665,205 @@ namespace ModernTextViewer.src.Services
         .markdown-body .task-list-item-checkbox {
             margin: 0 0.2em 0.25em -1.6em;
             vertical-align: middle;
+        }
+
+        /* Print-optimized CSS for PDF output */
+        @media print {
+            html, body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+                line-height: 1.4;
+                margin: 0;
+                padding: 0;
+            }
+            
+            .markdown-body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+                line-height: 1.4;
+                padding: 20px;
+                min-height: auto;
+                box-shadow: none;
+            }
+            
+            /* Headers with proper spacing */
+            .markdown-body h1, .markdown-body h2, .markdown-body h3,
+            .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+                color: black !important;
+                page-break-after: avoid;
+                margin-top: 18pt;
+                margin-bottom: 12pt;
+            }
+            
+            .markdown-body h1 {
+                font-size: 18pt;
+                border-bottom: 2pt solid black;
+                padding-bottom: 6pt;
+            }
+            
+            .markdown-body h2 {
+                font-size: 16pt;
+                border-bottom: 1pt solid black;
+                padding-bottom: 4pt;
+            }
+            
+            .markdown-body h3 {
+                font-size: 14pt;
+            }
+            
+            .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+                font-size: 12pt;
+            }
+            
+            /* Text elements */
+            .markdown-body p {
+                color: black !important;
+                margin-bottom: 12pt;
+                orphans: 3;
+                widows: 3;
+            }
+            
+            .markdown-body strong {
+                color: black !important;
+                font-weight: bold;
+            }
+            
+            .markdown-body em {
+                font-style: italic;
+            }
+            
+            /* Links - show URLs in print */
+            .markdown-body a {
+                color: black !important;
+                text-decoration: underline;
+            }
+            
+            /* Code blocks - prevent page breaks */
+            .markdown-body code {
+                background-color: #f5f5f5 !important;
+                color: black !important;
+                border: 1pt solid #ccc;
+                padding: 2pt 4pt;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+            }
+            
+            .markdown-body pre {
+                background-color: #f9f9f9 !important;
+                color: black !important;
+                border: 1pt solid #ccc;
+                padding: 12pt;
+                margin-bottom: 12pt;
+                page-break-inside: avoid;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+                line-height: 1.3;
+                overflow: visible;
+                white-space: pre-wrap;
+            }
+            
+            .markdown-body pre code {
+                background-color: transparent !important;
+                border: none;
+                padding: 0;
+            }
+            
+            /* Blockquotes - prevent page breaks */
+            .markdown-body blockquote {
+                color: #333 !important;
+                background-color: #f9f9f9 !important;
+                border-left: 4pt solid #ccc;
+                margin: 12pt 0;
+                padding: 8pt 12pt;
+                page-break-inside: avoid;
+                font-style: italic;
+            }
+            
+            /* Tables - optimize for print */
+            .markdown-body table {
+                border-collapse: collapse;
+                width: 100%;
+                margin-bottom: 12pt;
+                border: 1pt solid black;
+                page-break-inside: avoid;
+            }
+            
+            .markdown-body table th,
+            .markdown-body table td {
+                border: 1pt solid black;
+                padding: 6pt 8pt;
+                text-align: left;
+                color: black !important;
+                background-color: white !important;
+            }
+            
+            .markdown-body table th {
+                background-color: #f0f0f0 !important;
+                font-weight: bold;
+            }
+            
+            .markdown-body table tr:nth-child(even) {
+                background-color: #f9f9f9 !important;
+            }
+            
+            .markdown-body table tr:hover {
+                background-color: inherit !important;
+            }
+            
+            /* Lists */
+            .markdown-body ul, .markdown-body ol {
+                margin-bottom: 12pt;
+            }
+            
+            .markdown-body li {
+                margin-bottom: 4pt;
+            }
+            
+            /* Horizontal rules */
+            .markdown-body hr {
+                background-color: black !important;
+                border: none;
+                height: 1pt;
+                margin: 18pt 0;
+                page-break-after: avoid;
+            }
+            
+            /* Images */
+            .markdown-body img {
+                max-width: 100%;
+                height: auto;
+                page-break-inside: avoid;
+                margin: 12pt 0;
+            }
+            
+            /* Hide UI elements that shouldn't appear in print */
+            .no-print {
+                display: none !important;
+            }
+            
+            /* Task lists */
+            .markdown-body .task-list-item {
+                list-style-type: none;
+            }
+            
+            .markdown-body .task-list-item-checkbox {
+                margin-right: 6pt;
+            }
+            
+            /* Page break helpers */
+            .page-break-before {
+                page-break-before: always;
+            }
+            
+            .page-break-after {
+                page-break-after: always;
+            }
+            
+            .no-page-break {
+                page-break-inside: avoid;
+            }
         }";
         }
 

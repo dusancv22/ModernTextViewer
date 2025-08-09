@@ -29,6 +29,7 @@ namespace ModernTextViewer.src.Forms
         private Button quickSaveButton = null!;
         private Button fontButton = null!;
         private Button hyperlinkButton = null!;
+        private Button pdfExportButton = null!;
         private Button themeToggleButton = null!;
         private WebView2 webView = null!;
         private ContextMenuStrip textBoxContextMenu = null!;
@@ -472,16 +473,37 @@ namespace ModernTextViewer.src.Forms
             hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
             hyperlinkButton.MouseLeave += HyperlinkButton_MouseLeave;
 
-            themeToggleButton = new Button
+            pdfExportButton = new Button
             {
-                Text = isDarkMode ? "☀️" : "🌙",
+                Text = "📄",
                 Width = 25,
-                Height = 20,
+                Height = 25,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 10),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
+                ForeColor = isDarkMode ? Color.FromArgb(255, 150, 150) : Color.FromArgb(200, 50, 50)
+            };
+
+            pdfExportButton.FlatAppearance.BorderSize = 0;
+            pdfExportButton.Click += PdfExportButton_Click;
+            buttonToolTip.SetToolTip(pdfExportButton, "Export to PDF (Ctrl+P)");
+            
+            // Add hover effects
+            pdfExportButton.MouseEnter += PdfExportButton_MouseEnter;
+            pdfExportButton.MouseLeave += PdfExportButton_MouseLeave;
+
+            themeToggleButton = new Button
+            {
+                Text = isDarkMode ? "☀️" : "🌙",
+                Width = 30,
+                Height = 20,
+                Dock = DockStyle.Right,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 5, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
             };
 
@@ -499,7 +521,7 @@ namespace ModernTextViewer.src.Forms
                 Dock = DockStyle.Right,
                 AutoSize = true,
                 TextAlign = ContentAlignment.MiddleRight,
-                Padding = new Padding(5, 5, 10, 5), // Extra right padding for spacing from autoSaveLabel
+                Padding = new Padding(5, 5, 10, 5),
                 ForeColor = isDarkMode ? darkForeColor : Color.Gray
             };
 
@@ -519,15 +541,19 @@ namespace ModernTextViewer.src.Forms
             saveButton.Click += SaveButton_Click;
             quickSaveButton.Click += QuickSaveButton_Click;
             
-            bottomToolbar.Controls.Add(openButton);
-            bottomToolbar.Controls.Add(previewToggleButton);
-            bottomToolbar.Controls.Add(saveButton);
-            bottomToolbar.Controls.Add(quickSaveButton);
-            bottomToolbar.Controls.Add(fontButton);
-            bottomToolbar.Controls.Add(hyperlinkButton);
+            // Left-side buttons - Final order after swaps
+            bottomToolbar.Controls.Add(pdfExportButton);    // PDF Export
+            bottomToolbar.Controls.Add(previewToggleButton); // Preview Toggle (swapped with Save As)
+            bottomToolbar.Controls.Add(hyperlinkButton);    // Hyperlink (swapped with Quick Save)
+            bottomToolbar.Controls.Add(fontButton);         // Font
+            bottomToolbar.Controls.Add(quickSaveButton);    // Quick Save (swapped with Hyperlink)
+            bottomToolbar.Controls.Add(saveButton);         // Save As (swapped with Preview Toggle)
+            bottomToolbar.Controls.Add(openButton);         // Open
+            
+            // Right-side controls (keeping original order for now)
+            bottomToolbar.Controls.Add(autoSaveLabel);
             bottomToolbar.Controls.Add(themeToggleButton);
             bottomToolbar.Controls.Add(wordCountLabel);
-            bottomToolbar.Controls.Add(autoSaveLabel);
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();
@@ -786,6 +812,7 @@ namespace ModernTextViewer.src.Forms
                 
                 UpdateHyperlinkRendering();
                 UpdateWordCount();
+                UpdatePdfExportButtonState();
                 
                 // Reset preview mode when opening new file
                 document.IsPreviewMode = false;
@@ -885,6 +912,16 @@ namespace ModernTextViewer.src.Forms
             themeToggleButton.Enabled = enabled;
             fontButton.Enabled = enabled;
             
+            // PDF export button has special requirements
+            if (enabled)
+            {
+                UpdatePdfExportButtonState();
+            }
+            else
+            {
+                pdfExportButton.Enabled = false;
+            }
+            
             // Keep text editing available unless specifically disabled
             if (!enabled)
             {
@@ -915,6 +952,31 @@ namespace ModernTextViewer.src.Forms
             if (bytes < 1024 * 1024) return $"{bytes / 1024:F1} KB";
             if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024 * 1024):F1} MB";
             return $"{bytes / (1024 * 1024 * 1024):F1} GB";
+        }
+
+        /// <summary>
+        /// Checks if the current file is a markdown file
+        /// </summary>
+        private bool IsMarkdownFile()
+        {
+            if (string.IsNullOrEmpty(document.FilePath))
+                return false;
+            
+            string extension = Path.GetExtension(document.FilePath).ToLower();
+            return extension == ".md" || extension == ".markdown";
+        }
+
+        /// <summary>
+        /// Updates PDF export button state based on current file
+        /// </summary>
+        private void UpdatePdfExportButtonState()
+        {
+            if (pdfExportButton != null)
+            {
+                // Enable button for markdown files regardless of WebView2 state
+                // The button handler will initialize WebView2 if needed
+                pdfExportButton.Enabled = IsMarkdownFile();
+            }
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -1204,6 +1266,7 @@ namespace ModernTextViewer.src.Forms
             quickSaveButton?.Dispose();
             fontButton?.Dispose();
             hyperlinkButton?.Dispose();
+            pdfExportButton?.Dispose();
             themeToggleButton?.Dispose();
             wordCountLabel?.Dispose();
             autoSaveLabel?.Dispose();
@@ -1482,6 +1545,7 @@ namespace ModernTextViewer.src.Forms
             quickSaveButton.ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green;
             fontButton.ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue;
             hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+            pdfExportButton.ForeColor = isDarkMode ? Color.FromArgb(255, 150, 150) : Color.FromArgb(200, 50, 50);
             
             // Update preview toggle button
             previewToggleButton.ForeColor = isDarkMode ? Color.FromArgb(130, 200, 255) : Color.DarkBlue;
@@ -1644,6 +1708,8 @@ namespace ModernTextViewer.src.Forms
             fontButton.MouseLeave -= FontButton_MouseLeave;
             hyperlinkButton.MouseEnter -= HyperlinkButton_MouseEnter;
             hyperlinkButton.MouseLeave -= HyperlinkButton_MouseLeave;
+            pdfExportButton.MouseEnter -= PdfExportButton_MouseEnter;
+            pdfExportButton.MouseLeave -= PdfExportButton_MouseLeave;
             previewToggleButton.MouseEnter -= PreviewToggleButton_MouseEnter;
             previewToggleButton.MouseLeave -= PreviewToggleButton_MouseLeave;
             themeToggleButton.MouseEnter -= ThemeToggleButton_MouseEnter;
@@ -1658,6 +1724,8 @@ namespace ModernTextViewer.src.Forms
             fontButton.MouseLeave += FontButton_MouseLeave;
             hyperlinkButton.MouseEnter += HyperlinkButton_MouseEnter;
             hyperlinkButton.MouseLeave += HyperlinkButton_MouseLeave;
+            pdfExportButton.MouseEnter += PdfExportButton_MouseEnter;
+            pdfExportButton.MouseLeave += PdfExportButton_MouseLeave;
             previewToggleButton.MouseEnter += PreviewToggleButton_MouseEnter;
             previewToggleButton.MouseLeave += PreviewToggleButton_MouseLeave;
             themeToggleButton.MouseEnter += ThemeToggleButton_MouseEnter;
@@ -1683,6 +1751,11 @@ namespace ModernTextViewer.src.Forms
             hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(130, 220, 255) : Color.DodgerBlue;
         private void HyperlinkButton_MouseLeave(object? sender, EventArgs e) => 
             hyperlinkButton.ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue;
+            
+        private void PdfExportButton_MouseEnter(object? sender, EventArgs e) => 
+            pdfExportButton.ForeColor = isDarkMode ? Color.FromArgb(255, 180, 180) : Color.FromArgb(220, 80, 80);
+        private void PdfExportButton_MouseLeave(object? sender, EventArgs e) => 
+            pdfExportButton.ForeColor = isDarkMode ? Color.FromArgb(255, 150, 150) : Color.FromArgb(200, 50, 50);
             
         private void PreviewToggleButton_MouseEnter(object? sender, EventArgs e) => 
             previewToggleButton.ForeColor = isDarkMode ? Color.FromArgb(160, 220, 255) : Color.DodgerBlue;
@@ -1757,6 +1830,94 @@ namespace ModernTextViewer.src.Forms
         private void HyperlinkButton_Click(object? sender, EventArgs e)
         {
             ShowHyperlinkDialog();
+        }
+
+        private async void PdfExportButton_Click(object? sender, EventArgs e)
+        {
+            if (!IsMarkdownFile())
+            {
+                MessageBox.Show("PDF export is only available for markdown files (.md, .markdown).", 
+                    "PDF Export", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                // Disable button during operation
+                pdfExportButton.Enabled = false;
+                this.Cursor = Cursors.WaitCursor;
+                autoSaveLabel.Text = "Preparing PDF export...";
+                Application.DoEvents();
+
+                // Switch to preview mode if not already in it
+                if (!document.IsPreviewMode)
+                {
+                    autoSaveLabel.Text = "Switching to preview mode...";
+                    Application.DoEvents();
+                    await SwitchToPreviewMode();
+                    
+                    // Add a small delay to ensure the preview is fully loaded
+                    // This is necessary because ShowPreviewMode starts navigation but doesn't wait for completion
+                    await Task.Delay(500);
+                }
+
+                // Ensure WebView2 is initialized and ready
+                if (webView.CoreWebView2 == null)
+                {
+                    autoSaveLabel.Text = "Initializing preview...";
+                    Application.DoEvents();
+                    await InitializeWebView();
+                    
+                    // Additional delay after initialization
+                    await Task.Delay(300);
+                }
+
+                // Final check and open print dialog
+                if (webView.CoreWebView2 != null)
+                {
+                    autoSaveLabel.Text = "Opening print dialog...";
+                    Application.DoEvents();
+                    
+                    // Small delay to ensure WebView2 is fully ready
+                    await Task.Delay(200);
+                    
+                    // Open the Windows print dialog which allows saving as PDF
+                    webView.CoreWebView2.ShowPrintUI();
+                    
+                    autoSaveLabel.Text = "PDF export ready";
+                    await Task.Delay(1500);
+                    
+                    if (autoSaveLabel.Text == "PDF export ready")
+                    {
+                        autoSaveLabel.Text = !string.IsNullOrEmpty(document.FilePath) 
+                            ? $"Ready: {Path.GetFileName(document.FilePath)}" 
+                            : "Ready";
+                    }
+                }
+                else
+                {
+                    MessageBox.Show("Unable to initialize preview mode. PDF export requires WebView2.", 
+                        "PDF Export Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error during PDF export: {ex.Message}", 
+                    "PDF Export Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                autoSaveLabel.Text = "PDF export failed";
+                await Task.Delay(3000);
+                if (autoSaveLabel.Text == "PDF export failed")
+                {
+                    autoSaveLabel.Text = !string.IsNullOrEmpty(document.FilePath) 
+                        ? $"Ready: {Path.GetFileName(document.FilePath)}" 
+                        : "Ready";
+                }
+            }
+            finally
+            {
+                UpdatePdfExportButtonState();
+                this.Cursor = Cursors.Default;
+            }
         }
 
         private void ShowHyperlinkDialog()
@@ -1961,13 +2122,23 @@ namespace ModernTextViewer.src.Forms
                 e.Handled = true;
                 ShowHyperlinkDialog();
             }
+            
+            // Handle Ctrl+P for PDF export
+            if (e.Control && e.KeyCode == Keys.P)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                PdfExportButton_Click(null, EventArgs.Empty);
+                return;
+            }
             // Prevent any other control key combinations from affecting hyperlinks
             else if (e.Control && document.Hyperlinks.Count > 0)
             {
                 // Don't interfere with standard shortcuts
                 if (e.KeyCode != Keys.C && e.KeyCode != Keys.V && e.KeyCode != Keys.X && 
                     e.KeyCode != Keys.A && e.KeyCode != Keys.Z && e.KeyCode != Keys.Y &&
-                    e.KeyCode != Keys.S && e.KeyCode != Keys.O && e.KeyCode != Keys.F)
+                    e.KeyCode != Keys.S && e.KeyCode != Keys.O && e.KeyCode != Keys.F &&
+                    e.KeyCode != Keys.P)
                 {
                     // For any other control key combination, don't trigger hyperlink updates
                     e.SuppressKeyPress = false;
@@ -2235,6 +2406,16 @@ namespace ModernTextViewer.src.Forms
             else
             {
                 ShowRawMode();
+            }
+        }
+
+        private async Task SwitchToPreviewMode()
+        {
+            if (!document.IsPreviewMode)
+            {
+                document.IsPreviewMode = true;
+                UpdatePreviewToggleButton();
+                await ShowPreviewMode();
             }
         }
         
@@ -2521,6 +2702,7 @@ namespace ModernTextViewer.src.Forms
                 Application.DoEvents();
                 
                 isWebViewInitialized = true;
+                UpdatePdfExportButtonState();
             }
             catch (Exception ex)
             {
