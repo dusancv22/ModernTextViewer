@@ -964,13 +964,15 @@ namespace ModernTextViewer.src.Forms
         }
 
         /// <summary>
-        /// Updates PDF export button state based on current file and WebView2 status
+        /// Updates PDF export button state based on current file
         /// </summary>
         private void UpdatePdfExportButtonState()
         {
             if (pdfExportButton != null)
             {
-                pdfExportButton.Enabled = IsMarkdownFile() && isWebViewInitialized;
+                // Enable button for markdown files regardless of WebView2 state
+                // The button handler will initialize WebView2 if needed
+                pdfExportButton.Enabled = IsMarkdownFile();
             }
         }
 

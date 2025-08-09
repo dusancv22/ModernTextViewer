@@ -36,7 +36,13 @@
       "Bash(dir:*)",
       "Bash(git tag:*)",
       "Bash(gh release list:*)",
-      "Bash(gh release view:*)"
+      "Bash(gh release view:*)",
+      "Bash(git checkout:*)",
+      "Bash(tasklist:*)",
+      "Bash(wmic:*)",
+      "Bash(sed:*)",
+      "Bash(bash_2)",
+      "Bash(pkill:*)"
     ],
     "deny": []
   }
