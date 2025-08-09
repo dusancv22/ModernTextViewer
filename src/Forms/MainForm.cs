@@ -1852,28 +1852,39 @@ namespace ModernTextViewer.src.Forms
                     autoSaveLabel.Text = "Switching to preview mode...";
                     Application.DoEvents();
                     await SwitchToPreviewMode();
+                    
+                    // Add a small delay to ensure the preview is fully loaded
+                    // This is necessary because ShowPreviewMode starts navigation but doesn't wait for completion
+                    await Task.Delay(500);
                 }
 
-                // Ensure WebView2 is initialized
+                // Ensure WebView2 is initialized and ready
                 if (webView.CoreWebView2 == null)
                 {
                     autoSaveLabel.Text = "Initializing preview...";
                     Application.DoEvents();
                     await InitializeWebView();
+                    
+                    // Additional delay after initialization
+                    await Task.Delay(300);
                 }
 
+                // Final check and open print dialog
                 if (webView.CoreWebView2 != null)
                 {
                     autoSaveLabel.Text = "Opening print dialog...";
                     Application.DoEvents();
                     
+                    // Small delay to ensure WebView2 is fully ready
+                    await Task.Delay(200);
+                    
                     // Open the Windows print dialog which allows saving as PDF
                     webView.CoreWebView2.ShowPrintUI();
                     
-                    autoSaveLabel.Text = "PDF export completed";
-                    await Task.Delay(2000);
+                    autoSaveLabel.Text = "PDF export ready";
+                    await Task.Delay(1500);
                     
-                    if (autoSaveLabel.Text == "PDF export completed")
+                    if (autoSaveLabel.Text == "PDF export ready")
                     {
                         autoSaveLabel.Text = !string.IsNullOrEmpty(document.FilePath) 
                             ? $"Ready: {Path.GetFileName(document.FilePath)}" 
