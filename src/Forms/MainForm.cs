@@ -497,13 +497,13 @@ namespace ModernTextViewer.src.Forms
             themeToggleButton = new Button
             {
                 Text = isDarkMode ? "☀️" : "🌙",
-                Width = 25,
+                Width = 30,
                 Height = 20,
-                Dock = DockStyle.Left,
+                Dock = DockStyle.Right,  // Changed to right alignment
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 10),
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0, 0, 0, 0),
+                Margin = new Padding(0, 0, 5, 0),  // Add right margin for spacing
                 ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
             };
 
@@ -541,16 +541,20 @@ namespace ModernTextViewer.src.Forms
             saveButton.Click += SaveButton_Click;
             quickSaveButton.Click += QuickSaveButton_Click;
             
+            // Reorganized button order:
+            // 1. Open, 2. Save As, 3. Quick Save, 4. Font, 5. Hyperlink, 6. Preview Toggle, 7. PDF Export
             bottomToolbar.Controls.Add(openButton);
-            bottomToolbar.Controls.Add(previewToggleButton);
             bottomToolbar.Controls.Add(saveButton);
             bottomToolbar.Controls.Add(quickSaveButton);
             bottomToolbar.Controls.Add(fontButton);
             bottomToolbar.Controls.Add(hyperlinkButton);
+            bottomToolbar.Controls.Add(previewToggleButton);
             bottomToolbar.Controls.Add(pdfExportButton);
-            bottomToolbar.Controls.Add(themeToggleButton);
-            bottomToolbar.Controls.Add(wordCountLabel);
-            bottomToolbar.Controls.Add(autoSaveLabel);
+            
+            // Right-aligned controls (added in reverse order for right dock)
+            bottomToolbar.Controls.Add(autoSaveLabel);      // Will appear rightmost
+            bottomToolbar.Controls.Add(themeToggleButton);  // Will appear next to word count
+            bottomToolbar.Controls.Add(wordCountLabel);     // Will appear leftmost of right-aligned items
             this.Controls.Add(bottomToolbar);
             
             bottomToolbar.BringToFront();
