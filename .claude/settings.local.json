@@ -36,7 +36,8 @@
       "Bash(dir:*)",
       "Bash(git tag:*)",
       "Bash(gh release list:*)",
-      "Bash(gh release view:*)"
+      "Bash(gh release view:*)",
+      "Bash(git merge:*)"
     ],
     "deny": []
   }
