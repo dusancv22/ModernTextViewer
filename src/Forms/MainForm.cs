@@ -1877,47 +1877,8 @@ namespace ModernTextViewer.src.Forms
 
         private void TextBox_MouseMove(object? sender, MouseEventArgs e)
         {
-            int charIndex = textBox.GetCharIndexFromPosition(e.Location);
-            
-            // Validate that we're actually over text, not empty space
-            if (charIndex >= 0 && charIndex < textBox.TextLength)
-            {
-                // Get the actual bounds of this character
-                Point charPos = textBox.GetPositionFromCharIndex(charIndex);
-                Point nextCharPos = charIndex + 1 < textBox.TextLength ? 
-                    textBox.GetPositionFromCharIndex(charIndex + 1) : 
-                    new Point(charPos.X + 10, charPos.Y);
-                
-                // For characters at end of line, use line height for bounds checking
-                Rectangle charBounds;
-                if (nextCharPos.Y > charPos.Y || charIndex + 1 >= textBox.TextLength)
-                {
-                    // Character is at end of line
-                    using (Graphics g = textBox.CreateGraphics())
-                    {
-                        SizeF charSize = g.MeasureString(textBox.Text[charIndex].ToString(), textBox.Font);
-                        charBounds = new Rectangle(charPos.X, charPos.Y, (int)charSize.Width, (int)charSize.Height);
-                    }
-                }
-                else
-                {
-                    // Normal character in middle of line
-                    charBounds = new Rectangle(charPos.X, charPos.Y, nextCharPos.X - charPos.X, textBox.Font.Height);
-                }
-                
-                // Check if mouse is actually within character bounds
-                if (charBounds.Contains(e.Location))
-                {
-                    var hyperlink = document.GetHyperlinkAtPosition(charIndex);
-                    if (hyperlink != null)
-                    {
-                        textBox.Cursor = Cursors.Hand;
-                        return;
-                    }
-                }
-            }
-            
-            textBox.Cursor = Cursors.IBeam;
+            // Keep cursor as I-beam at all times for consistent text editing experience
+            // Hyperlinks can still be clicked, but cursor won't change on hover
         }
 
         private void TextBox_MouseDoubleClick(object? sender, MouseEventArgs e)

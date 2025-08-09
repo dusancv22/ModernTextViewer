@@ -146,7 +146,6 @@ ModernTextViewer is a lightweight, modern Windows Forms text editor built with .
 - **Hyperlink Support**: Rich text hyperlink functionality with visual styling and interaction
   - Add hyperlinks via right-click context menu "Add Hyperlink...", toolbar button (🔗), or Ctrl+K shortcut
   - Visual styling with blue text and underline in light mode, light blue (#4DB8FF) in dark mode
-  - Hand cursor on hover with precise hover detection
   - Click to open hyperlinks in default browser
   - Edit existing hyperlinks and remove hyperlinks via dialog
 - **Clipboard Integration**: Advanced clipboard support with format preservation
