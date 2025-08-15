@@ -973,9 +973,9 @@ namespace ModernTextViewer.src.Forms
         {
             if (pdfExportButton != null)
             {
-                // Enable button for markdown files regardless of WebView2 state
+                // Enable button for markdown files or when content is being treated as markdown (preview mode)
                 // The button handler will initialize WebView2 if needed
-                pdfExportButton.Enabled = IsMarkdownFile();
+                pdfExportButton.Enabled = IsMarkdownFile() || document.IsPreviewMode;
             }
         }
 
@@ -1834,7 +1834,7 @@ namespace ModernTextViewer.src.Forms
 
         private async void PdfExportButton_Click(object? sender, EventArgs e)
         {
-            if (!IsMarkdownFile())
+            if (!IsMarkdownFile() && !document.IsPreviewMode)
             {
                 MessageBox.Show("PDF export is only available for markdown files (.md, .markdown).", 
                     "PDF Export", MessageBoxButtons.OK, MessageBoxIcon.Information);
