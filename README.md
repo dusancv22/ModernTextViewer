@@ -28,13 +28,13 @@ A modern, feature-rich text editor for Windows with a clean interface, dark mode
   - **Instant Theme Switching**: Themes change instantly in preview mode without page reloads
   - **Advanced Rendering**: GitHub-style CSS with full markdown extensions support (tables, code blocks, task lists)
   - **Smart Content Sync**: Seamless switching between raw text and formatted preview
-- **PDF Export**: Export markdown files as PDF with optimized print formatting (Ctrl+P)
+- **HTML Preview**: Render local `.html`/`.htm` files as full web pages inside the editor using WebView2
+- **PDF Export**: Export Markdown, HTML, and DOCX-derived content as PDF with optimized print formatting (Ctrl+P)
   - **Print-Optimized Output**: Clean, professional PDF layout using WebView2's native print dialog
   - **Automatic Preview Mode**: Seamlessly switches to preview mode for export if needed
-  - **Markdown Files Only**: Available exclusively for .md and .markdown files
 - **Hyperlink Support**: Add, edit, and navigate hyperlinks (Ctrl+K)
 - **Auto-Save**: Automatic saving every 5 minutes with visual status indicator
-- **Multi-Format Support**: Open and save .txt, .srt (subtitle), and .md (markdown) files
+- **Multi-Format Support**: Open and save .txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt (subtitle), .md/.markdown (markdown), .html/.htm files, and open .docx for read-only preview
 - **Drag & Drop**: Simply drag files into the window to open them
 - **Undo/Redo**: Standard undo functionality (Ctrl+Z)
 
@@ -130,12 +130,12 @@ See the revolutionary performance improvement in real-time - themes switch insta
 1. **Drag and Drop**: Simply drag any supported file into the window
 2. **Using Save Dialog**: Click the 💾+ button to open a file through the save dialog
 
-### PDF Export (Markdown Files)
-1. Open any `.md` or `.markdown` file
+### PDF Export (Markdown, HTML, and DOCX Files)
+1. Open any `.md`/`.markdown`, `.html`/`.htm`, or `.docx` file
 2. Press Ctrl+P or click the 📄 button in the toolbar
 3. The application will automatically switch to preview mode if needed
 4. Use the native print dialog to save as PDF with optimized formatting
-5. **Note**: PDF export is only available for markdown files
+5. **Note**: PDF export is available for Markdown, HTML, and DOCX-derived content (DOCX is loaded as plain text for preview/export)
 
 ### Text Formatting
 1. Select the text you want to format
@@ -160,6 +160,19 @@ See the revolutionary performance improvement in real-time - themes switch insta
 3. View your markdown rendered with GitHub-style formatting
 4. Click the 📝 button to return to raw editing mode
 5. **Theme switching**: Change themes instantly while in preview mode - no waiting!
+
+### HTML Preview Mode
+1. Open any `.html` or `.htm` file
+2. Click the 👁️ button in the toolbar to switch to preview mode
+3. The app will navigate the embedded WebView2 control directly to the HTML file so relative assets (CSS/JS/images) resolve correctly
+4. Click the 📝 button to return to raw editing mode
+
+### DOCX Preview Mode (Read-only)
+1. Open any `.docx` file
+2. The document's text content is extracted and displayed in raw mode for reading/editing as plain text (the original `.docx` file is not modified)
+3. Click the 👁️ button to preview the extracted text with the same themed Markdown-style preview
+4. Use Ctrl+P / 📄 to export the DOCX-derived content to PDF via WebView2
+5. **Note**: Quick Save and Auto-save will not overwrite `.docx` files; use **Save As** to save changes in a text-based format
 
 *💡 See the [Visual Showcase](#-visual-showcase) above for side-by-side comparisons of raw vs preview modes and instant theme switching demonstrations.*
 

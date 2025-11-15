@@ -126,7 +126,8 @@ namespace ModernTextViewer.src.Services
         {
             DataObject dataObject = new DataObject();
             
-            // Set plain text
+            // Set plain text in both Unicode and ANSI formats for broad compatibility
+            dataObject.SetText(text, TextDataFormat.UnicodeText);
             dataObject.SetText(text, TextDataFormat.Text);
             
             // Set RTF format

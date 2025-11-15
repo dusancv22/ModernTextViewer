@@ -702,7 +702,7 @@ namespace ModernTextViewer.src.Forms
             {
                 var openDialog = new OpenFileDialog()
                 {
-                    Filter = "Text files (*.txt)|*.txt|Markdown files (*.md)|*.md|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
+                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Word documents (*.docx)|*.docx|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
                     FilterIndex = 1,
                     Title = "Open File"
                 };
@@ -726,7 +726,8 @@ namespace ModernTextViewer.src.Forms
             {
                 var saveDialog = new SaveFileDialog()
                 {
-                    Filter = "Text files (*.txt)|*.txt|Markdown files (*.md)|*.md|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
+                    // Intentionally do not include .docx here to avoid corrupting Word documents.
+                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
                     FilterIndex = 1
                 };
                 
@@ -747,6 +748,13 @@ namespace ModernTextViewer.src.Forms
             if (string.IsNullOrEmpty(document.FilePath))
             {
                 autoSaveLabel.Text = "Please use 'Save As' first";
+                return;
+            }
+
+            // Prevent accidental overwrite of binary Word documents
+            if (IsDocxFile())
+            {
+                autoSaveLabel.Text = "Quick save is not supported for .docx files. Use 'Save As' to save as text.";
                 return;
             }
             
@@ -962,8 +970,32 @@ namespace ModernTextViewer.src.Forms
             if (string.IsNullOrEmpty(document.FilePath))
                 return false;
             
-            string extension = Path.GetExtension(document.FilePath).ToLower();
+            string extension = Path.GetExtension(document.FilePath).ToLowerInvariant();
             return extension == ".md" || extension == ".markdown";
+        }
+
+        /// <summary>
+        /// Checks if the current file is an HTML file
+        /// </summary>
+        private bool IsHtmlFile()
+        {
+            if (string.IsNullOrEmpty(document.FilePath))
+                return false;
+
+            string extension = Path.GetExtension(document.FilePath).ToLowerInvariant();
+            return extension == ".html" || extension == ".htm";
+        }
+
+        /// <summary>
+        /// Checks if the current file is a DOCX file
+        /// </summary>
+        private bool IsDocxFile()
+        {
+            if (string.IsNullOrEmpty(document.FilePath))
+                return false;
+
+            string extension = Path.GetExtension(document.FilePath).ToLowerInvariant();
+            return extension == ".docx";
         }
 
         /// <summary>
@@ -973,9 +1005,8 @@ namespace ModernTextViewer.src.Forms
         {
             if (pdfExportButton != null)
             {
-                // Enable button for markdown files or when content is being treated as markdown (preview mode)
-                // The button handler will initialize WebView2 if needed
-                pdfExportButton.Enabled = IsMarkdownFile() || document.IsPreviewMode;
+                // Enable button for markdown or HTML files, or when content is being previewed
+                pdfExportButton.Enabled = document.SupportsPreview() || document.IsPreviewMode;
             }
         }
 
@@ -1067,8 +1098,8 @@ namespace ModernTextViewer.src.Forms
                 string[]? files = e.Data.GetData(DataFormats.FileDrop) as string[];
                 if (files?.Length == 1)
                 {
-                    string ext = Path.GetExtension(files[0]).ToLower();
-                    if (ext == ".txt" || ext == ".srt" || ext == ".md")
+                    string ext = Path.GetExtension(files[0]).ToLowerInvariant();
+                    if (ext == ".txt" || ext == ".srt" || ext == ".md" || ext == ".markdown" || ext == ".html" || ext == ".htm")
                     {
                         e.Effect = DragDropEffects.Copy;
                         return;
@@ -1100,6 +1131,12 @@ namespace ModernTextViewer.src.Forms
         {
             if (!string.IsNullOrEmpty(document.FilePath) && document.IsDirty)
             {
+                // Skip autosave for .docx files to avoid corrupting Word documents
+                if (IsDocxFile())
+                {
+                    return;
+                }
+
                 try
                 {
                     // Show brief autosave indicator without disrupting user
@@ -1834,9 +1871,9 @@ namespace ModernTextViewer.src.Forms
 
         private async void PdfExportButton_Click(object? sender, EventArgs e)
         {
-            if (!IsMarkdownFile() && !document.IsPreviewMode)
+            if (!document.SupportsPreview() && !document.IsPreviewMode)
             {
-                MessageBox.Show("PDF export is only available for markdown files (.md, .markdown).", 
+                MessageBox.Show("PDF export is only available for Markdown (.md, .markdown) and HTML (.html, .htm) content.", 
                     "PDF Export", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -2302,6 +2339,15 @@ namespace ModernTextViewer.src.Forms
                 }
             }
 
+            // If there are no hyperlinks in the current selection, fall back to the
+            // default RichTextBox copy behavior for maximum compatibility (e.g. CLI tools).
+            if (selectedHyperlinks.Count == 0)
+            {
+                textBox.Copy();
+                return;
+            }
+
+            // Otherwise, copy with full hyperlink-aware clipboard formats.
             HyperlinkService.SetClipboardWithHyperlinks(selectedText, selectedHyperlinks);
         }
 
@@ -2315,7 +2361,7 @@ namespace ModernTextViewer.src.Forms
         /// This method performs the following validations:
         /// <list type="bullet">
         /// <item>Ensures there is content to preview (either from file or textbox)</item>
-        /// <item>Verifies the file supports preview mode (.md, .markdown extensions)</item>
+        /// <item>Verifies the file supports preview mode (Markdown or HTML extensions)</item>
         /// <item>Shows appropriate error messages for unsupported scenarios</item>
         /// </list>
         /// If all validations pass, calls <see cref="SwitchViewMode"/> to toggle between modes.
@@ -2331,7 +2377,7 @@ namespace ModernTextViewer.src.Forms
                 // Check if a file is open
                 if (string.IsNullOrEmpty(document.FilePath) && string.IsNullOrEmpty(textBox.Text.Trim()))
                 {
-                    MessageBox.Show("Please open a Markdown file or type some content to use preview mode.", 
+                    MessageBox.Show("Please open a Markdown or HTML file, or type some content to use preview mode.", 
                         "No Content to Preview", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
@@ -2339,7 +2385,7 @@ namespace ModernTextViewer.src.Forms
                 // Check if current file supports preview
                 if (!document.SupportsPreview() && !string.IsNullOrEmpty(document.FilePath))
                 {
-                    MessageBox.Show("Preview is only available for Markdown files (.md, .markdown)\n\nCurrent file type is not supported.", 
+                    MessageBox.Show("Preview is only available for Markdown (.md, .markdown) and HTML (.html, .htm) files.\n\nCurrent file type is not supported.", 
                         "Preview Not Available", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
@@ -2528,18 +2574,31 @@ namespace ModernTextViewer.src.Forms
                 }
                 Application.DoEvents();
                 
-                // Generate optimized HTML with progressive loading for large content
-                string html = PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
+                // Generate optimized HTML or navigate to an HTML file, depending on type
+                bool isHtmlFile = IsHtmlFile();
                 
-                // Update progress for navigation
-                if (isLargeContent)
+                if (isHtmlFile && !string.IsNullOrEmpty(document.FilePath))
                 {
-                    autoSaveLabel.Text = "Loading preview...";
-                    Application.DoEvents();
+                    // For HTML files on disk, navigate directly to the file so that
+                    // relative CSS/JS/image references resolve correctly.
+                    await NavigateHtmlFileAsync(document.FilePath);
                 }
-                
-                // Optimized navigation for large content
-                await NavigateToHtmlWithOptimization(html);
+                else
+                {
+                    // For markdown (and other previewable content), generate themed HTML
+                    // with progressive loading support.
+                    string html = PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
+
+                    // Update progress for navigation
+                    if (isLargeContent)
+                    {
+                        autoSaveLabel.Text = "Loading preview...";
+                        Application.DoEvents();
+                    }
+
+                    // Optimized navigation for large content
+                    await NavigateToHtmlWithOptimization(html);
+                }
                 
                 // Update progress for final steps
                 autoSaveLabel.Text = "Finalizing preview...";
@@ -2737,6 +2796,13 @@ namespace ModernTextViewer.src.Forms
         {
             try
             {
+                // For HTML files, leave the rendered page as-is and only change the app chrome.
+                if (IsHtmlFile())
+                {
+                    autoSaveLabel.Text = document.IsPreviewMode ? "Preview mode active" : "Raw editing mode";
+                    return;
+                }
+
                 if (webView.CoreWebView2 != null)
                 {
                     // Show immediate visual feedback
@@ -2858,6 +2924,24 @@ namespace ModernTextViewer.src.Forms
                 // Standard navigation for smaller content
                 webView.NavigateToString(html);
             }
+        }
+
+        /// <summary>
+        /// Navigates WebView2 directly to an HTML file on disk so that relative
+        /// resources (CSS, JS, images) are resolved correctly.
+        /// </summary>
+        /// <param name="filePath">Full path to the HTML file.</param>
+        /// <returns>A completed task.</returns>
+        private Task NavigateHtmlFileAsync(string filePath)
+        {
+            if (webView.CoreWebView2 == null)
+            {
+                throw new InvalidOperationException("WebView2 is not initialized");
+            }
+
+            var uri = new Uri(filePath);
+            webView.CoreWebView2.Navigate(uri.AbsoluteUri);
+            return Task.CompletedTask;
         }
         
         /// <summary>

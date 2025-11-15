@@ -43,8 +43,7 @@ namespace ModernTextViewer.src.Models
 
         /// <summary>
         /// Gets or sets whether the document is currently in preview mode.
-        /// Preview mode displays rendered markdown in a WebView2 control instead of raw text.
-        /// Only supported for markdown files (.md, .markdown).
+        /// Preview mode displays rendered content (Markdown, HTML, or DOCX-derived text) in a WebView2 control instead of raw text.
         /// </summary>
         /// <value>
         /// <c>true</c> if the document is in preview mode; otherwise, <c>false</c>.
@@ -86,7 +85,7 @@ namespace ModernTextViewer.src.Models
 
         /// <summary>
         /// Determines whether the current document supports preview mode based on its file extension.
-        /// Preview mode is available for markdown files with .md or .markdown extensions.
+        /// Preview mode is available for markdown, HTML, and DOCX files.
         /// </summary>
         /// <returns>
         /// <c>true</c> if the document supports preview mode; otherwise, <c>false</c>.
@@ -97,6 +96,9 @@ namespace ModernTextViewer.src.Models
         /// <list type="bullet">
         /// <item>.md</item>
         /// <item>.markdown</item>
+        /// <item>.html</item>
+        /// <item>.htm</item>
+        /// <item>.docx</item>
         /// </list>
         /// Returns <c>false</c> if <see cref="FilePath"/> is null, empty, or has no extension.
         /// </remarks>
@@ -122,7 +124,12 @@ namespace ModernTextViewer.src.Models
             // Convert to lowercase for case-insensitive comparison
             extension = extension.ToLowerInvariant();
 
-            return extension == ".md" || extension == ".markdown";
+            // Support preview for Markdown, HTML, and DOCX files
+            return extension == ".md" 
+                || extension == ".markdown"
+                || extension == ".html"
+                || extension == ".htm"
+                || extension == ".docx";
         }
 
         protected virtual void OnFilePathChanged()

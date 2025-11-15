@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Text;
 using ModernTextViewer.src.Models;
+using ModernTextViewer.src.Services;
 using System.Collections.Generic;
 using System.Buffers;
 using System.Threading;
@@ -28,16 +29,26 @@ namespace ModernTextViewer.src.Services
             {
                 var fileInfo = new FileInfo(filePath);
                 long totalBytes = fileInfo.Length;
-                
-                // Use optimized loading based on file size
+
+                // Special handling for .docx (binary) files – load as plain text via DocxPreviewService
+                string extension = Path.GetExtension(filePath).ToLowerInvariant();
                 string content;
-                if (totalBytes < PROGRESS_THRESHOLD)
+
+                if (extension == ".docx")
                 {
-                    content = await LoadSmallFileOptimizedAsync(filePath, cancellationToken);
+                    content = await DocxPreviewService.LoadDocxAsPlainTextAsync(filePath).ConfigureAwait(false);
                 }
                 else
                 {
-                    content = await LoadLargeFileOptimizedAsync(filePath, totalBytes, progress, cancellationToken);
+                    // Use optimized loading based on file size for text-based files
+                    if (totalBytes < PROGRESS_THRESHOLD)
+                    {
+                        content = await LoadSmallFileOptimizedAsync(filePath, cancellationToken);
+                    }
+                    else
+                    {
+                        content = await LoadLargeFileOptimizedAsync(filePath, totalBytes, progress, cancellationToken);
+                    }
                 }
 
                 // Extract hyperlinks if present using optimized method

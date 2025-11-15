@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ModernTextViewer is a Windows Forms application built with .NET 8.0 that provides a modern text viewing and editing experience with features including:
 - Dark/light mode support with instant theme switching (<500ms)
 - Auto-save functionality (5-minute intervals)
-- Support for multiple file formats (.txt, .srt, .md, .markdown)
-- Preview/raw mode toggle for markdown files with WebView2-powered HTML rendering
-- PDF export functionality for markdown files using WebView2's native print dialog
+- Support for multiple file formats (.txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt, .md, .markdown, .html, .htm) plus read-only preview for .docx
+- Preview/raw mode toggle for markdown and HTML files with WebView2-powered HTML rendering
+- PDF export functionality for markdown, HTML, and DOCX-derived content using WebView2's native print dialog
 - Custom borderless window with P/Invoke-based dragging and resizing
 - Font customization and zoom controls (Ctrl+Plus/Minus, Ctrl+Scroll)
 - Find/Replace dialog with regex support
@@ -54,7 +54,7 @@ The application follows a Model-View-Service pattern with these key components:
 - Custom minimize/maximize/close buttons with hover effects
 
 ### WebView2 Integration
-- Lazy initialization on first markdown preview request
+- Lazy initialization on first preview request
 - 10-second initialization timeout with error handling
 - JavaScript injection for instant theme switching without page reloads
 - Cached CSS generation for performance optimization
@@ -105,11 +105,11 @@ The application follows a Model-View-Service pattern with these key components:
 
 ### PDF Export Implementation
 - **Toolbar Integration**: PDF export button (📄) positioned first in the toolbar (leftmost position)
-- **File Type Detection**: Uses `IsMarkdownFile()` method to check .md/.markdown extensions
-- **Button State Management**: `UpdatePdfExportButtonState()` enables/disables button based on file type
-- **Export Handler**: `PdfExportButton_Click` automatically switches to preview mode if needed
+- **File Type Detection**: Uses `DocumentModel.SupportsPreview()` (Markdown `.md`/`.markdown` and HTML `.html`/`.htm`)
+- **Button State Management**: `UpdatePdfExportButtonState()` enables/disables button based on preview support or active preview mode
+- **Export Handler**: `PdfExportButton_Click` automatically switches to preview mode if needed (Markdown or HTML)
 - **WebView2 Integration**: Calls `ShowPrintUI()` method for native Windows print dialog
-- **Print CSS**: Enhanced PreviewService with print-optimized styles for better PDF output
+- **Print CSS**: Enhanced PreviewService with print-optimized styles for better Markdown output (HTML uses its own styling)
 - **Keyboard Shortcut**: Ctrl+P triggers PDF export (handled in MainForm_KeyDown)
 - **Error Handling**: Proper error boundaries for WebView2 print operations
 
@@ -126,15 +126,16 @@ The application follows a Model-View-Service pattern with these key components:
 4. Test with WebView2 Runtime uninstalled to verify error handling
 
 ### File Format Support
-1. Check extension in `IsMarkdownFile()` method
-2. Preview mode only activates for .md/.markdown files
-3. PDF export only available for .md/.markdown files
-4. All text operations work on any text-based file
-5. Binary file detection not implemented - will corrupt binary files
+1. Preview/PDF support is controlled by `DocumentModel.SupportsPreview()` (currently `.md`, `.markdown`, `.html`, `.htm`, `.docx`)
+2. Markdown preview uses `PreviewService.GenerateUniversalThemeHtml()` to build themed HTML
+3. HTML preview navigates WebView2 directly to the local file URI so relative assets (CSS/JS/images) resolve
+4. DOCX preview uses `DocxPreviewService` to extract plain text and then treats it like Markdown/plain text for preview/export
+5. All text operations work on any text-based file; DOCX is treated as read-only source (Quick Save/Auto-save will not overwrite .docx)
+6. Binary file detection not implemented - will corrupt binary files
 
 ### Toolbar Organization
 Current toolbar button order (left to right):
-1. PDF Export (📄) - Available for markdown files only
+1. PDF Export (📄) - Available when `DocumentModel.SupportsPreview()` is true (Markdown/HTML) or preview mode is active
 2. Preview Toggle (👁️/📝) - Raw/preview mode switching  
 3. Hyperlink (🔗) - Add/edit hyperlinks
 4. Font (A) - Font customization dialog
@@ -164,11 +165,12 @@ Right side: Word Count | Theme Toggle (🌙/☀️) | Auto-save Status
 When making changes, verify:
 1. Dark/light mode switching works in both raw and preview modes
 2. Keyboard shortcuts function correctly with proper modifier keys
-3. Auto-save triggers after 5 minutes when document is dirty
+3. Auto-save triggers after 5 minutes when document is dirty (excluding .docx files)
 4. Find/Replace works with case sensitivity and whole word options
 5. Preview mode renders markdown correctly with tables, code blocks, lists
-6. PDF export button is enabled only for markdown files
-7. PDF export automatically switches to preview mode and opens print dialog
-8. Window can be dragged by title bar and resized from all edges
-9. Font dialog changes apply to text and persist across sessions
-10. Hyperlinks open in default browser when clicked
+6. Preview mode renders HTML files by navigating WebView2 directly to the file URI
+7. Preview mode renders DOCX files by extracting plain text and displaying it via the Markdown-style preview
+8. PDF export button is enabled for Markdown/HTML/DOCX-derived content and automatically switches to preview mode and opens print dialog
+9. Window can be dragged by title bar and resized from all edges
+10. Font dialog changes apply to text and persist across sessions
+11. Hyperlinks open in default browser when clicked
