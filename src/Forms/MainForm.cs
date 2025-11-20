@@ -702,7 +702,7 @@ namespace ModernTextViewer.src.Forms
             {
                 var openDialog = new OpenFileDialog()
                 {
-                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Word documents (*.docx)|*.docx|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
+                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Word documents (*.docx)|*.docx|Subtitle files (*.srt)|*.srt|NFO files (*.nfo)|*.nfo|All files (*.*)|*.*",
                     FilterIndex = 1,
                     Title = "Open File"
                 };
@@ -727,7 +727,7 @@ namespace ModernTextViewer.src.Forms
                 var saveDialog = new SaveFileDialog()
                 {
                     // Intentionally do not include .docx here to avoid corrupting Word documents.
-                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Subtitle files (*.srt)|*.srt|All files (*.*)|*.*",
+                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Subtitle files (*.srt)|*.srt|NFO files (*.nfo)|*.nfo|All files (*.*)|*.*",
                     FilterIndex = 1
                 };
                 
@@ -1099,7 +1099,7 @@ namespace ModernTextViewer.src.Forms
                 if (files?.Length == 1)
                 {
                     string ext = Path.GetExtension(files[0]).ToLowerInvariant();
-                    if (ext == ".txt" || ext == ".srt" || ext == ".md" || ext == ".markdown" || ext == ".html" || ext == ".htm")
+                    if (ext == ".txt" || ext == ".srt" || ext == ".md" || ext == ".markdown" || ext == ".html" || ext == ".htm" || ext == ".nfo")
                     {
                         e.Effect = DragDropEffects.Copy;
                         return;

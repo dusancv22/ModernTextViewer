@@ -12,6 +12,12 @@ namespace ModernTextViewer.src.Services
 {
     public class FileService
     {
+        static FileService()
+        {
+            // Register code page provider to support CP437 encoding for NFO files
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        }
+
         private const int BUFFER_SIZE = 65536; // 64KB buffer for optimal I/O
         private const int PROGRESS_THRESHOLD = 1024 * 1024; // 1MB threshold for progress reporting
         
@@ -30,24 +36,39 @@ namespace ModernTextViewer.src.Services
                 var fileInfo = new FileInfo(filePath);
                 long totalBytes = fileInfo.Length;
 
-                // Special handling for .docx (binary) files – load as plain text via DocxPreviewService
+                // Special handling for different file types
                 string extension = Path.GetExtension(filePath).ToLowerInvariant();
                 string content;
 
                 if (extension == ".docx")
                 {
+                    // Load .docx files as plain text via DocxPreviewService
                     content = await DocxPreviewService.LoadDocxAsPlainTextAsync(filePath).ConfigureAwait(false);
                 }
-                else
+                else if (extension == ".nfo")
                 {
-                    // Use optimized loading based on file size for text-based files
+                    // Load .nfo files with special encoding detection (CP437 or Windows-1251)
+                    Encoding nfoEncoding = DetectNfoEncoding(filePath);
                     if (totalBytes < PROGRESS_THRESHOLD)
                     {
-                        content = await LoadSmallFileOptimizedAsync(filePath, cancellationToken);
+                        content = await LoadSmallFileOptimizedAsync(filePath, nfoEncoding, cancellationToken);
                     }
                     else
                     {
-                        content = await LoadLargeFileOptimizedAsync(filePath, totalBytes, progress, cancellationToken);
+                        content = await LoadLargeFileOptimizedAsync(filePath, totalBytes, nfoEncoding, progress, cancellationToken);
+                    }
+                }
+                else
+                {
+                    // Use UTF-8 encoding for standard text files
+                    Encoding utf8Encoding = new UTF8Encoding(false);
+                    if (totalBytes < PROGRESS_THRESHOLD)
+                    {
+                        content = await LoadSmallFileOptimizedAsync(filePath, utf8Encoding, cancellationToken);
+                    }
+                    else
+                    {
+                        content = await LoadLargeFileOptimizedAsync(filePath, totalBytes, utf8Encoding, progress, cancellationToken);
                     }
                 }
 
@@ -65,7 +86,7 @@ namespace ModernTextViewer.src.Services
             }
         }
 
-        public static async Task SaveFileAsync(string filePath, string content, List<HyperlinkModel>? hyperlinks = null, 
+        public static async Task SaveFileAsync(string filePath, string content, List<HyperlinkModel>? hyperlinks = null,
             IProgress<int>? progress = null, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrEmpty(filePath))
@@ -73,14 +94,17 @@ namespace ModernTextViewer.src.Services
 
             try
             {
-                // Add hyperlink metadata if present
-                if (hyperlinks != null && hyperlinks.Count > 0)
+                string extension = Path.GetExtension(filePath).ToLowerInvariant();
+                bool isNfoFile = extension == ".nfo";
+
+                // Add hyperlink metadata if present (not for NFO files as they are plain text)
+                if (!isNfoFile && hyperlinks != null && hyperlinks.Count > 0)
                 {
                     content = HyperlinkService.AddHyperlinkMetadata(content, hyperlinks);
                 }
 
                 // Use optimized method for line ending normalization and writing
-                await SaveContentOptimizedAsync(filePath, content, progress, cancellationToken);
+                await SaveContentOptimizedAsync(filePath, content, isNfoFile, progress, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -88,18 +112,64 @@ namespace ModernTextViewer.src.Services
             }
         }
         
-        // Optimized methods for performance
-        private static async Task<string> LoadSmallFileOptimizedAsync(string filePath, CancellationToken cancellationToken)
+        // Detect encoding for NFO files by analyzing content
+        private static Encoding DetectNfoEncoding(string filePath)
         {
-            using var reader = new StreamReader(filePath, new UTF8Encoding(false), true, BUFFER_SIZE);
+            try
+            {
+                // Read a sample of the file
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read))
+                {
+                    bytesRead = fs.Read(buffer, 0, Math.Min(buffer.Length, (int)fs.Length));
+                }
+
+                if (bytesRead == 0)
+                    return Encoding.GetEncoding(437); // Default to CP437 for empty files
+
+                // Try to detect if it contains Cyrillic characters
+                // Check for common Cyrillic byte patterns in Windows-1251
+                int cyrillicScore = 0;
+                int asciiArtScore = 0;
+
+                for (int i = 0; i < bytesRead; i++)
+                {
+                    byte b = buffer[i];
+                    // Common Cyrillic range in Windows-1251: 0xC0-0xFF (А-я)
+                    if (b >= 0xC0 && b <= 0xFF)
+                        cyrillicScore++;
+                    // Common box drawing characters in CP437: 0xB0-0xDF
+                    if (b >= 0xB0 && b <= 0xDF)
+                        asciiArtScore++;
+                }
+
+                // If we have significant Cyrillic content, use Windows-1251
+                if (cyrillicScore > asciiArtScore && cyrillicScore > bytesRead * 0.05)
+                    return Encoding.GetEncoding(1251); // Windows-1251 for Cyrillic
+
+                // Default to CP437 for ASCII art
+                return Encoding.GetEncoding(437);
+            }
+            catch
+            {
+                // Fallback to CP437 if detection fails
+                return Encoding.GetEncoding(437);
+            }
+        }
+
+        // Optimized methods for performance
+        private static async Task<string> LoadSmallFileOptimizedAsync(string filePath, Encoding encoding, CancellationToken cancellationToken)
+        {
+            using var reader = new StreamReader(filePath, encoding, true, BUFFER_SIZE);
             return await reader.ReadToEndAsync().ConfigureAwait(false);
         }
-        
-        private static async Task<string> LoadLargeFileOptimizedAsync(string filePath, long totalBytes, 
+
+        private static async Task<string> LoadLargeFileOptimizedAsync(string filePath, long totalBytes, Encoding encoding,
             IProgress<(int bytesRead, long totalBytes)>? progress, CancellationToken cancellationToken)
         {
             using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, BUFFER_SIZE, useAsync: true);
-            using var reader = new StreamReader(fileStream, new UTF8Encoding(false), true, BUFFER_SIZE);
+            using var reader = new StreamReader(fileStream, encoding, true, BUFFER_SIZE);
             
             var stringBuilder = new StringBuilder((int)Math.Min(totalBytes, int.MaxValue));
             var buffer = ArrayPool<char>.Shared.Rent(BUFFER_SIZE);
@@ -216,20 +286,42 @@ namespace ModernTextViewer.src.Services
             return NormalizeLineEndingsOptimized(content.AsSpan());
         }
         
-        private static async Task SaveContentOptimizedAsync(string filePath, string content, 
+        private static async Task SaveContentOptimizedAsync(string filePath, string content, bool isNfoFile,
             IProgress<int>? progress, CancellationToken cancellationToken)
         {
             // Normalize line endings to Windows format efficiently
             var normalizedContent = NormalizeLineEndingsToWindowsOptimized(content);
-            
+
             // Ensure content ends with line ending
             if (!normalizedContent.EndsWith("\r\n"))
             {
                 normalizedContent += "\r\n";
             }
-            
+
+            // Determine encoding based on file type and content
+            Encoding encoding;
+            if (isNfoFile)
+            {
+                // Check if content has Cyrillic characters
+                bool hasCyrillic = false;
+                foreach (char c in normalizedContent)
+                {
+                    // Russian Cyrillic Unicode range
+                    if ((c >= '\u0400' && c <= '\u04FF') || (c >= '\u0500' && c <= '\u052F'))
+                    {
+                        hasCyrillic = true;
+                        break;
+                    }
+                }
+                encoding = hasCyrillic ? Encoding.GetEncoding(1251) : Encoding.GetEncoding(437);
+            }
+            else
+            {
+                encoding = new UTF8Encoding(false);
+            }
+
             // Use optimized writing for large content
-            using var writer = new StreamWriter(filePath, false, new UTF8Encoding(false), BUFFER_SIZE);
+            using var writer = new StreamWriter(filePath, false, encoding, BUFFER_SIZE);
             
             if (normalizedContent.Length > PROGRESS_THRESHOLD)
             {

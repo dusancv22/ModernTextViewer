@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ModernTextViewer is a Windows Forms application built with .NET 8.0 that provides a modern text viewing and editing experience with features including:
 - Dark/light mode support with instant theme switching (<500ms)
 - Auto-save functionality (5-minute intervals)
-- Support for multiple file formats (.txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt, .md, .markdown, .html, .htm) plus read-only preview for .docx
+- Support for multiple file formats (.txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt, .md, .markdown, .html, .htm, .nfo) plus read-only preview for .docx
+- NFO file support with automatic encoding detection (CP437 for ASCII art, Windows-1251 for Cyrillic content)
 - Preview/raw mode toggle for markdown and HTML files with WebView2-powered HTML rendering
 - PDF export functionality for markdown, HTML, and DOCX-derived content using WebView2's native print dialog
 - Custom borderless window with P/Invoke-based dragging and resizing
@@ -43,8 +44,9 @@ The application follows a Model-View-Service pattern with these key components:
 - **Main UI**: `src/Forms/MainForm.cs` (~2000 lines) - Central form handling all UI interactions, window management, keyboard shortcuts, and WebView2 integration
 - **Data Model**: `src/Models/DocumentModel.cs` - Document state management including content, dirty tracking, preview mode state, and file metadata
 - **Services**:
-  - `FileService.cs` - Async file I/O with UTF-8 encoding (no BOM) and line ending normalization
+  - `FileService.cs` - Async file I/O with UTF-8 encoding (no BOM), NFO encoding detection (CP437/Windows-1251), and line ending normalization
   - `PreviewService.cs` - Markdown-to-HTML conversion with theme-aware CSS generation
+  - `DocxPreviewService.cs` - DOCX text extraction for preview functionality
   - `HyperlinkService.cs` - Hyperlink detection and management for rich text
 
 ### Window Management Architecture
@@ -130,8 +132,9 @@ The application follows a Model-View-Service pattern with these key components:
 2. Markdown preview uses `PreviewService.GenerateUniversalThemeHtml()` to build themed HTML
 3. HTML preview navigates WebView2 directly to the local file URI so relative assets (CSS/JS/images) resolve
 4. DOCX preview uses `DocxPreviewService` to extract plain text and then treats it like Markdown/plain text for preview/export
-5. All text operations work on any text-based file; DOCX is treated as read-only source (Quick Save/Auto-save will not overwrite .docx)
-6. Binary file detection not implemented - will corrupt binary files
+5. NFO files use automatic encoding detection: `DetectNfoEncoding()` analyzes content and selects CP437 (code page 437) for ASCII art or Windows-1251 (code page 1251) for Cyrillic text. On save, Cyrillic Unicode characters (U+0400-U+052F) trigger Windows-1251, otherwise CP437 is used.
+6. All text operations work on any text-based file; DOCX is treated as read-only source (Quick Save/Auto-save will not overwrite .docx)
+7. Binary file detection not implemented - will corrupt binary files
 
 ### Toolbar Organization
 Current toolbar button order (left to right):
