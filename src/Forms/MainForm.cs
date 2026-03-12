@@ -17,6 +17,13 @@ namespace ModernTextViewer.src.Forms
 {
     public partial class MainForm : Form
     {
+        // Cached font objects to avoid repeated allocations
+        private static readonly Font CachedConsolas10 = new("Consolas", 10f);
+        private static readonly Font CachedArial12 = new("Arial", 12f);
+        private static readonly Font CachedSegoeSymbol12 = new("Segoe UI Symbol", 12f);
+        private static readonly Font CachedSegoe10 = new("Segoe UI", 10f);
+        private static readonly Font CachedSegoe12Bold = new("Segoe UI", 12f, FontStyle.Bold);
+
         private RichTextBox textBox = null!;
         private Panel titleBar = null!;
         private Button closeButton = null!;
@@ -31,8 +38,9 @@ namespace ModernTextViewer.src.Forms
         private Button hyperlinkButton = null!;
         private Button pdfExportButton = null!;
         private Button themeToggleButton = null!;
-        private WebView2 webView = null!;
-        private ContextMenuStrip textBoxContextMenu = null!;
+        private WebView2? webView;
+        private Panel? webViewParentPanel;
+        private ContextMenuStrip? textBoxContextMenu;
         private string lastTextContent = string.Empty;
         private ToolTip buttonToolTip = null!;
         private int lastSelectionStart = 0;
@@ -97,11 +105,9 @@ namespace ModernTextViewer.src.Forms
                 buttonToolTip.AutoPopDelay = 5000;
                 
                 InitializeUI();
-                
+
                 // Initialize with ready status
                 autoSaveLabel.Text = "Ready";
-                
-                autoSaveTimer.Start();
             }
             catch (Exception ex)
             {
@@ -133,10 +139,12 @@ namespace ModernTextViewer.src.Forms
             
             this.LocationChanged += Form1_LocationChanged;
 
-            this.Shown += (s, e) => 
+            this.Shown += (s, e) =>
             {
                 textBox?.Focus();
-                textBox?.Refresh();  // Force refresh after showing
+                textBox?.Refresh();
+                // Start auto-save timer after form is visible to avoid startup overhead
+                autoSaveTimer.Start();
             };
         }
 
@@ -196,7 +204,7 @@ namespace ModernTextViewer.src.Forms
                 FlatStyle = FlatStyle.Flat,
                 Dock = DockStyle.Top,
                 ForeColor = isDarkMode ? darkForeColor : Color.Gray,
-                Font = new Font("Arial", fontSize),
+                Font = fontSize == 12 ? CachedArial12 : new Font("Arial", fontSize),
                 Cursor = Cursors.Hand
             };
         }
@@ -222,7 +230,7 @@ namespace ModernTextViewer.src.Forms
                 Multiline = true,
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Consolas", currentFontSize),
+                Font = CachedConsolas10,
                 WordWrap = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical,
                 BackColor = isDarkMode ? darkBackColor : Color.White,
@@ -234,39 +242,36 @@ namespace ModernTextViewer.src.Forms
                 DetectUrls = false
             };
 
-            webView = new WebView2
-            {
-                Dock = DockStyle.Fill,
-                Visible = false,
-                Margin = Padding.Empty,
-                Padding = Padding.Empty
-            };
-            
-            // Set default background color to match theme
-            webView.DefaultBackgroundColor = isDarkMode ? darkBackColor : Color.White;
-            
-            // Don't initialize WebView2 immediately - do it lazily when needed for preview
+            // WebView2 is created lazily on first preview request to speed up startup
+            // Store reference to parent panel for deferred insertion
+            webViewParentPanel = paddingPanel;
 
             // Handle line endings in KeyDown instead of KeyPress
-            textBox.KeyDown += (s, e) => 
+            textBox.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
                     e.Handled = true;
                     int selectionStart = textBox.SelectionStart;
                     int selectionLength = textBox.SelectionLength;
-                    
+
                     // Replace any selected text with newline, or just insert newline
                     textBox.SelectedText = Environment.NewLine;
-                    
+
                     // The cursor is automatically positioned correctly after SelectedText assignment
                     textBox.ScrollToCaret();
                 }
             };
 
-            // Initialize context menu
-            InitializeContextMenu();
-            textBox.ContextMenuStrip = textBoxContextMenu;
+            // Context menu is created lazily on first right-click
+            textBox.MouseUp += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Right && textBoxContextMenu == null)
+                {
+                    InitializeContextMenu();
+                    textBox.ContextMenuStrip = textBoxContextMenu;
+                }
+            };
 
             // Add event handlers
             textBox.MouseWheel += TextBox_MouseWheel;
@@ -278,9 +283,8 @@ namespace ModernTextViewer.src.Forms
             textBox.KeyDown += TextBox_KeyDown;
             textBox.MouseDoubleClick += TextBox_MouseDoubleClick;
 
-            // Set up control hierarchy
+            // Set up control hierarchy (WebView2 added later on first preview request)
             paddingPanel.Controls.Add(textBox);
-            paddingPanel.Controls.Add(webView);
             textBoxContainer.Controls.Add(paddingPanel);
             this.Controls.Add(textBoxContainer);
 
@@ -289,10 +293,7 @@ namespace ModernTextViewer.src.Forms
             lastTextContent = textBox.Text;
 
             textBoxContainer.SendToBack();
-            
-            // Initialize word count
-            UpdateWordCount();
-            
+
             // Save initial state for undo
             SaveUndoState();
         }
@@ -372,7 +373,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Symbol", 12),
+                Font = CachedSegoeSymbol12,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(255, 200, 130) : Color.DarkOrange
@@ -388,7 +389,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10),
+                Font = CachedSegoe10,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 200, 255) : Color.DarkBlue
@@ -408,7 +409,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Symbol", 12),
+                Font = CachedSegoeSymbol12,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 180, 255) : Color.RoyalBlue
@@ -423,7 +424,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Symbol", 12),
+                Font = CachedSegoeSymbol12,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(130, 255, 130) : Color.Green
@@ -438,7 +439,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                Font = CachedSegoe12Bold,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(180, 180, 255) : Color.RoyalBlue
@@ -459,7 +460,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10),
+                Font = CachedSegoe10,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(100, 200, 255) : Color.Blue
@@ -480,7 +481,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 25,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10),
+                Font = CachedSegoe10,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 0, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(255, 150, 150) : Color.FromArgb(200, 50, 50)
@@ -501,7 +502,7 @@ namespace ModernTextViewer.src.Forms
                 Height = 20,
                 Dock = DockStyle.Right,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10),
+                Font = CachedSegoe10,
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 0, 5, 0),
                 ForeColor = isDarkMode ? Color.FromArgb(255, 223, 0) : Color.FromArgb(100, 100, 200)
@@ -702,7 +703,7 @@ namespace ModernTextViewer.src.Forms
             {
                 var openDialog = new OpenFileDialog()
                 {
-                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Word documents (*.docx)|*.docx|Subtitle files (*.srt)|*.srt|NFO files (*.nfo)|*.nfo|All files (*.*)|*.*",
+                    Filter = "Text files (*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs)|*.txt;*.log;*.csv;*.json;*.xml;*.ini;*.config;*.cs|Markdown files (*.md;*.markdown)|*.md;*.markdown|HTML files (*.html;*.htm)|*.html;*.htm|Word documents (*.docx)|*.docx|Mermaid diagrams (*.mmd)|*.mmd|Subtitle files (*.srt)|*.srt|NFO files (*.nfo)|*.nfo|All files (*.*)|*.*",
                     FilterIndex = 1,
                     Title = "Open File"
                 };
@@ -996,6 +997,18 @@ namespace ModernTextViewer.src.Forms
 
             string extension = Path.GetExtension(document.FilePath).ToLowerInvariant();
             return extension == ".docx";
+        }
+
+        /// <summary>
+        /// Checks if the current file is a Mermaid diagram file (.mmd)
+        /// </summary>
+        private bool IsMermaidFile()
+        {
+            if (string.IsNullOrEmpty(document.FilePath))
+                return false;
+
+            string extension = Path.GetExtension(document.FilePath).ToLowerInvariant();
+            return extension == ".mmd";
         }
 
         /// <summary>
@@ -1412,15 +1425,15 @@ namespace ModernTextViewer.src.Forms
                 string themeName = isDarkMode ? "dark" : "light";
                 bool isLargeContent = textBox.Text.Length > 5000;
                 bool hasPreview = document.IsPreviewMode && webView != null && webView.Visible;
-                
+
                 // Step 1: Basic UI colors
                 autoSaveLabel.Text = $"Applying {themeName} theme...";
                 Application.DoEvents();
 
                 // Update form colors (instant)
                 this.BackColor = isDarkMode ? darkBackColor : Color.White;
-                
-                // Update WebView2 background color to match theme
+
+                // Update WebView2 background color to match theme (only if created)
                 if (webView != null)
                 {
                     webView.DefaultBackgroundColor = isDarkMode ? darkBackColor : Color.White;
@@ -1447,7 +1460,7 @@ namespace ModernTextViewer.src.Forms
                 UpdateUIComponents();
 
                 // Step 4: Preview mode theme (if active)
-                if (hasPreview && webView.CoreWebView2 != null)
+                if (hasPreview && webView?.CoreWebView2 != null)
                 {
                     autoSaveLabel.Text = $"Updating preview for {themeName} theme...";
                     Application.DoEvents();
@@ -1899,18 +1912,18 @@ namespace ModernTextViewer.src.Forms
                 }
 
                 // Ensure WebView2 is initialized and ready
-                if (webView.CoreWebView2 == null)
+                if (webView?.CoreWebView2 == null)
                 {
                     autoSaveLabel.Text = "Initializing preview...";
                     Application.DoEvents();
                     await InitializeWebView();
-                    
+
                     // Additional delay after initialization
                     await Task.Delay(300);
                 }
 
                 // Final check and open print dialog
-                if (webView.CoreWebView2 != null)
+                if (webView?.CoreWebView2 != null)
                 {
                     autoSaveLabel.Text = "Opening print dialog...";
                     Application.DoEvents();
@@ -2576,17 +2589,26 @@ namespace ModernTextViewer.src.Forms
                 
                 // Generate optimized HTML or navigate to an HTML file, depending on type
                 bool isHtmlFile = IsHtmlFile();
-                
+                bool isMermaidFile = IsMermaidFile();
+
                 if (isHtmlFile && !string.IsNullOrEmpty(document.FilePath))
                 {
                     // For HTML files on disk, navigate directly to the file so that
                     // relative CSS/JS/image references resolve correctly.
                     await NavigateHtmlFileAsync(document.FilePath);
                 }
+                else if (isMermaidFile)
+                {
+                    // For .mmd files, use dedicated mermaid processing that auto-detects
+                    // diagram blocks mixed with regular text content.
+                    string html = PreviewService.GenerateMermaidFileHtml(document.Content, isDarkMode);
+                    await NavigateToHtmlWithOptimization(html);
+                }
                 else
                 {
                     // For markdown (and other previewable content), generate themed HTML
-                    // with progressive loading support.
+                    // with progressive loading support. Mermaid fenced code blocks in markdown
+                    // are automatically detected and rendered as diagrams.
                     string html = PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
 
                     // Update progress for navigation
@@ -2606,7 +2628,7 @@ namespace ModernTextViewer.src.Forms
                 
                 // Hide textBox, show webView
                 textBox.Visible = false;
-                webView.Visible = true;
+                webView!.Visible = true;
                 webView.BringToFront();
                 
                 // Final status message based on content size
@@ -2654,7 +2676,7 @@ namespace ModernTextViewer.src.Forms
         private void ShowRawMode()
         {
             // Show textBox, hide webView
-            webView.Visible = false;
+            if (webView != null) webView.Visible = false;
             textBox.Visible = true;
             textBox.BringToFront();
             
@@ -2700,17 +2722,40 @@ namespace ModernTextViewer.src.Forms
         /// This method sets <see cref="isWebViewInitialized"/> to true upon successful completion.
         /// WebView2 runtime must be installed on the system for initialization to succeed.
         /// </remarks>
+        /// <summary>
+        /// Creates the WebView2 control and adds it to the panel hierarchy.
+        /// Called lazily on first preview request to avoid slowing down app startup.
+        /// </summary>
+        private void EnsureWebViewCreated()
+        {
+            if (webView != null) return;
+
+            webView = new WebView2
+            {
+                Dock = DockStyle.Fill,
+                Visible = false,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                DefaultBackgroundColor = isDarkMode ? darkBackColor : Color.White
+            };
+
+            webViewParentPanel?.Controls.Add(webView);
+        }
+
         private async Task InitializeWebView()
         {
             try
             {
+                // Ensure the WebView2 control exists (created lazily)
+                EnsureWebViewCreated();
+
                 // Step 1: Start initialization
                 autoSaveLabel.Text = "Starting WebView2 initialization...";
                 Application.DoEvents();
-                
+
                 // Add timeout to prevent hanging
                 var timeoutTask = Task.Delay(TimeSpan.FromSeconds(10));
-                var initTask = webView.EnsureCoreWebView2Async();
+                var initTask = webView!.EnsureCoreWebView2Async();
                 
                 autoSaveLabel.Text = "Connecting to WebView2 runtime...";
                 Application.DoEvents();
@@ -2803,7 +2848,7 @@ namespace ModernTextViewer.src.Forms
                     return;
                 }
 
-                if (webView.CoreWebView2 != null)
+                if (webView?.CoreWebView2 != null)
                 {
                     // Show immediate visual feedback
                     autoSaveLabel.Text = "Switching theme...";
@@ -2827,7 +2872,24 @@ namespace ModernTextViewer.src.Forms
             if (body.getAttribute('data-theme') !== '" + themeValue + @"') {
                 body.setAttribute('data-theme', '" + themeValue + @"');
             }
-            
+
+            // Re-render mermaid diagrams with updated theme if mermaid is loaded
+            if (typeof mermaid !== 'undefined') {
+                const mermaidTheme = '" + themeValue + @"' === 'dark' ? 'dark' : 'default';
+                mermaid.initialize({ startOnLoad: false, theme: mermaidTheme, securityLevel: 'loose' });
+                const mermaidEls = document.querySelectorAll('.mermaid');
+                if (mermaidEls.length > 0) {
+                    mermaidEls.forEach(function(el) {
+                        const source = el.getAttribute('data-mermaid-source');
+                        if (source) {
+                            el.removeAttribute('data-processed');
+                            el.innerHTML = source;
+                        }
+                    });
+                    mermaid.run();
+                }
+            }
+
             return 'theme-switch-success';
         };
         
@@ -2907,13 +2969,13 @@ namespace ModernTextViewer.src.Forms
         /// <returns>A task representing the asynchronous navigation operation</returns>
         private async Task NavigateToHtmlWithOptimization(string html)
         {
-            if (webView.CoreWebView2 == null)
+            if (webView?.CoreWebView2 == null)
             {
                 throw new InvalidOperationException("WebView2 is not initialized");
             }
-            
+
             const int LARGE_HTML_THRESHOLD = 50000; // 50KB threshold for optimization
-            
+
             if (html.Length > LARGE_HTML_THRESHOLD)
             {
                 // Use optimized navigation for large content
@@ -2934,7 +2996,7 @@ namespace ModernTextViewer.src.Forms
         /// <returns>A completed task.</returns>
         private Task NavigateHtmlFileAsync(string filePath)
         {
-            if (webView.CoreWebView2 == null)
+            if (webView?.CoreWebView2 == null)
             {
                 throw new InvalidOperationException("WebView2 is not initialized");
             }
@@ -2960,11 +3022,11 @@ namespace ModernTextViewer.src.Forms
                 
                 // Pre-warm the navigation with a minimal page first (reduces initial parsing)
                 string loadingHtml = GenerateLoadingPlaceholder();
-                webView.NavigateToString(loadingHtml);
-                
+                webView!.NavigateToString(loadingHtml);
+
                 // Small delay to allow initial page load
                 await Task.Delay(100);
-                
+
                 // Now navigate to the actual content
                 webView.NavigateToString(html);
             }
@@ -2972,7 +3034,7 @@ namespace ModernTextViewer.src.Forms
             {
                 System.Diagnostics.Debug.WriteLine($"Large content navigation failed: {ex.Message}");
                 // Fallback to standard navigation
-                webView.NavigateToString(html);
+                webView!.NavigateToString(html);
             }
         }
         
@@ -3019,16 +3081,18 @@ namespace ModernTextViewer.src.Forms
         /// <returns>A task representing the asynchronous operation</returns>
         private async Task FallbackToFullThemeReload()
         {
-            if (webView.CoreWebView2 != null)
+            if (webView?.CoreWebView2 != null)
             {
                 autoSaveLabel.Text = "Reloading preview...";
-                
-                // Use the new universal CSS approach even in fallback with optimization
-                string htmlContent = PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
-                
+
+                // Use the appropriate generator based on file type
+                string htmlContent = IsMermaidFile()
+                    ? PreviewService.GenerateMermaidFileHtml(document.Content, isDarkMode)
+                    : PreviewService.GenerateUniversalThemeHtml(document.Content, isDarkMode);
+
                 // Use optimized navigation for fallback as well
                 await NavigateToHtmlWithOptimization(htmlContent);
-                
+
                 // Wait a moment for the page to load
                 await Task.Delay(300);
                 autoSaveLabel.Text = "Preview mode active";

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -9,6 +9,13 @@
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>ModernTextViewer</RootNamespace>
+    <!--
+      MSB3277: The WebView2 package bundles an unused WPF assembly that references
+      WindowsBase 5.0.0.0, conflicting with the 4.0.0.0 from .NET 8. This app only
+      uses the WinForms component — the WPF DLL is never loaded at runtime.
+      This is a known WebView2 packaging issue with no clean workaround.
+    -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

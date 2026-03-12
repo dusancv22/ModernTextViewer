@@ -34,7 +34,8 @@ A modern, feature-rich text editor for Windows with a clean interface, dark mode
   - **Automatic Preview Mode**: Seamlessly switches to preview mode for export if needed
 - **Hyperlink Support**: Add, edit, and navigate hyperlinks (Ctrl+K)
 - **Auto-Save**: Automatic saving every 5 minutes with visual status indicator
-- **Multi-Format Support**: Open and save .txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt (subtitle), .md/.markdown (markdown), .html/.htm files, and open .docx for read-only preview
+- **Multi-Format Support**: Open and save .txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt (subtitle), .md/.markdown (markdown), .html/.htm files, open .docx for read-only preview, and .mmd for Mermaid diagram visualization
+- **Mermaid Diagram Support**: Render Mermaid diagrams visually in preview mode — works in `.mmd` files and within ```mermaid fenced code blocks in Markdown, even when mixed with regular text
 - **Drag & Drop**: Simply drag files into the window to open them
 - **Undo/Redo**: Standard undo functionality (Ctrl+Z)
 
@@ -130,12 +131,12 @@ See the revolutionary performance improvement in real-time - themes switch insta
 1. **Drag and Drop**: Simply drag any supported file into the window
 2. **Using Save Dialog**: Click the 💾+ button to open a file through the save dialog
 
-### PDF Export (Markdown, HTML, and DOCX Files)
-1. Open any `.md`/`.markdown`, `.html`/`.htm`, or `.docx` file
+### PDF Export (Markdown, HTML, DOCX, and Mermaid Files)
+1. Open any `.md`/`.markdown`, `.html`/`.htm`, `.docx`, or `.mmd` file
 2. Press Ctrl+P or click the 📄 button in the toolbar
 3. The application will automatically switch to preview mode if needed
 4. Use the native print dialog to save as PDF with optimized formatting
-5. **Note**: PDF export is available for Markdown, HTML, and DOCX-derived content (DOCX is loaded as plain text for preview/export)
+5. **Note**: PDF export is available for Markdown, HTML, DOCX-derived, and Mermaid content
 
 ### Text Formatting
 1. Select the text you want to format
@@ -173,6 +174,14 @@ See the revolutionary performance improvement in real-time - themes switch insta
 3. Click the 👁️ button to preview the extracted text with the same themed Markdown-style preview
 4. Use Ctrl+P / 📄 to export the DOCX-derived content to PDF via WebView2
 5. **Note**: Quick Save and Auto-save will not overwrite `.docx` files; use **Save As** to save changes in a text-based format
+
+### Mermaid Diagram Preview
+1. Open a `.mmd` file or a Markdown file containing ```mermaid fenced code blocks
+2. Click the 👁️ button to switch to preview mode
+3. Mermaid diagrams are automatically detected and rendered as interactive visual diagrams
+4. Mixed content is supported — regular text is displayed alongside rendered diagrams
+5. Theme switching updates diagram colors to match dark/light mode
+6. Use Ctrl+P / 📄 to export diagrams to PDF
 
 *💡 See the [Visual Showcase](#-visual-showcase) above for side-by-side comparisons of raw vs preview modes and instant theme switching demonstrations.*
 

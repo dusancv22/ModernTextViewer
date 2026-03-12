@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using Markdig;
 
 namespace ModernTextViewer.src.Services
@@ -12,17 +13,18 @@ namespace ModernTextViewer.src.Services
     /// </summary>
     public class PreviewService
     {
-        // Static cached pipeline for performance - configured once and reused
-        private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
-            .UseAdvancedExtensions()
-            .Build();
+        // Lazy-initialized pipeline - only created when first preview is requested
+        private static readonly Lazy<MarkdownPipeline> _lazyMarkdownPipeline = new(() =>
+            new MarkdownPipelineBuilder().UseAdvancedExtensions().Build());
+        private static MarkdownPipeline _markdownPipeline => _lazyMarkdownPipeline.Value;
 
-        // Cached CSS strings for better performance
-        private static readonly string _darkModeCSS = GenerateDarkModeCSS();
-        private static readonly string _lightModeCSS = GenerateLightModeCSS();
-        
-        // New: Universal CSS with custom properties for dynamic theme switching
-        private static readonly string _universalCSS = GenerateUniversalCSS();
+        // Lazy-initialized CSS strings - only generated when first preview is requested
+        private static readonly Lazy<string> _lazyDarkModeCSS = new(() => GenerateDarkModeCSS());
+        private static readonly Lazy<string> _lazyLightModeCSS = new(() => GenerateLightModeCSS());
+        private static readonly Lazy<string> _lazyUniversalCSS = new(() => GenerateUniversalCSS());
+        private static string _darkModeCSS => _lazyDarkModeCSS.Value;
+        private static string _lightModeCSS => _lazyLightModeCSS.Value;
+        private static string _universalCSS => _lazyUniversalCSS.Value;
         
         // Performance thresholds for large content optimization
         private const int LARGE_CONTENT_THRESHOLD = 50000; // 50KB HTML threshold
@@ -30,6 +32,31 @@ namespace ModernTextViewer.src.Services
         
         // Emergency fallback: disable chunking if set to false (for debugging)
         private const bool ENABLE_CHUNKING = true;
+
+        // Mermaid diagram detection - keywords that start a mermaid block
+        private static readonly string[] MermaidKeywords = new[]
+        {
+            "graph ", "graph\n", "flowchart ", "flowchart\n",
+            "sequenceDiagram", "classDiagram", "stateDiagram",
+            "erDiagram", "gantt", "pie", "gitgraph",
+            "mindmap", "timeline", "journey", "quadrantChart",
+            "requirementDiagram", "C4Context", "sankey", "xychart", "block-beta"
+        };
+
+        // Regex to detect mermaid content in Markdig HTML output.
+        // Markdig with DiagramExtension (UseAdvancedExtensions) outputs: <pre class="mermaid">...</pre>
+        // This is already the format Mermaid.js expects, so no post-processing needed — just detection.
+        private static readonly Regex MermaidPreRegex = new Regex(
+            @"<pre\s+class=""mermaid"">",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // Fallback: detect <pre><code class="language-mermaid"> for non-diagram Markdig pipelines
+        private static readonly Regex MermaidCodeBlockRegex = new Regex(
+            @"<pre><code\s+class=""language-mermaid"">([\s\S]*?)</code></pre>",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // Mermaid.js CDN URL
+        private const string MERMAID_CDN_URL = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js";
 
         /// <summary>
         /// Converts markdown text to HTML using the cached Markdig pipeline.
@@ -62,6 +89,238 @@ namespace ModernTextViewer.src.Services
                        $"<p>{System.Net.WebUtility.HtmlEncode(ex.Message)}</p>" +
                        $"</div>";
             }
+        }
+
+        /// <summary>
+        /// Checks whether the given text content contains any Mermaid diagram syntax.
+        /// </summary>
+        public static bool ContainsMermaidContent(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return false;
+
+            // Check for ```mermaid fenced code blocks (markdown style)
+            if (text.Contains("```mermaid"))
+                return true;
+
+            // Check for standalone mermaid keywords at the start of a line
+            var lines = text.Split('\n');
+            foreach (var line in lines)
+            {
+                string trimmed = line.TrimStart();
+                foreach (var keyword in MermaidKeywords)
+                {
+                    if (trimmed.StartsWith(keyword, StringComparison.Ordinal))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Post-processes HTML output from Markdig to convert mermaid code blocks into
+        /// Mermaid.js-compatible format (<pre class="mermaid">).
+        /// </summary>
+        private static string PostProcessMermaidBlocks(string htmlContent)
+        {
+            if (string.IsNullOrEmpty(htmlContent))
+                return htmlContent;
+
+            return MermaidCodeBlockRegex.Replace(htmlContent, match =>
+            {
+                // Decode HTML entities back to raw text for Mermaid.js to parse
+                string mermaidSource = WebUtility.HtmlDecode(match.Groups[1].Value);
+                return $"<pre class=\"mermaid\">{mermaidSource}</pre>";
+            });
+        }
+
+        /// <summary>
+        /// Pre-processes .mmd file content by detecting mermaid diagram blocks mixed with regular text
+        /// and wrapping them in fenced code blocks so Markdig can handle them.
+        /// </summary>
+        public static string PreProcessMermaidFileContent(string content)
+        {
+            if (string.IsNullOrEmpty(content))
+                return content;
+
+            // If the content already has markdown fenced mermaid blocks, return as-is
+            if (content.Contains("```mermaid"))
+                return content;
+
+            var lines = content.Split('\n');
+            var result = new StringBuilder();
+            bool inMermaidBlock = false;
+            var mermaidBuffer = new StringBuilder();
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                string trimmed = line.TrimStart();
+
+                bool isMermaidStart = false;
+                if (!inMermaidBlock)
+                {
+                    foreach (var keyword in MermaidKeywords)
+                    {
+                        if (trimmed.StartsWith(keyword, StringComparison.Ordinal))
+                        {
+                            isMermaidStart = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (isMermaidStart && !inMermaidBlock)
+                {
+                    // Start a new mermaid block
+                    inMermaidBlock = true;
+                    mermaidBuffer.Clear();
+                    mermaidBuffer.AppendLine(line);
+                }
+                else if (inMermaidBlock)
+                {
+                    // An empty line (or end of content) ends the mermaid block,
+                    // but only if the NEXT non-empty line doesn't look like mermaid continuation
+                    if (string.IsNullOrWhiteSpace(trimmed))
+                    {
+                        // Look ahead to see if mermaid content continues
+                        bool mermaidContinues = false;
+                        for (int j = i + 1; j < lines.Length; j++)
+                        {
+                            string nextTrimmed = lines[j].TrimStart();
+                            if (!string.IsNullOrWhiteSpace(nextTrimmed))
+                            {
+                                // If next non-empty line is indented or starts with mermaid syntax chars,
+                                // it's probably still part of the diagram
+                                bool isMermaidContinuation = nextTrimmed.StartsWith("|") ||
+                                    nextTrimmed.StartsWith("--") ||
+                                    nextTrimmed.StartsWith("-->") ||
+                                    nextTrimmed.StartsWith("->>") ||
+                                    nextTrimmed.StartsWith("==") ||
+                                    nextTrimmed.StartsWith(":::") ||
+                                    nextTrimmed.StartsWith("%%") ||
+                                    nextTrimmed.StartsWith("end") ||
+                                    nextTrimmed.StartsWith("subgraph") ||
+                                    nextTrimmed.StartsWith("section") ||
+                                    nextTrimmed.StartsWith("loop") ||
+                                    nextTrimmed.StartsWith("alt") ||
+                                    nextTrimmed.StartsWith("opt") ||
+                                    nextTrimmed.StartsWith("par") ||
+                                    nextTrimmed.StartsWith("Note") ||
+                                    nextTrimmed.StartsWith("participant") ||
+                                    nextTrimmed.StartsWith("actor") ||
+                                    nextTrimmed.Contains("-->") ||
+                                    nextTrimmed.Contains("->>") ||
+                                    nextTrimmed.Contains("---") ||
+                                    lines[j].StartsWith("    ") ||
+                                    lines[j].StartsWith("\t");
+
+                                // Also check if next line starts a NEW mermaid diagram keyword
+                                foreach (var keyword in MermaidKeywords)
+                                {
+                                    if (nextTrimmed.StartsWith(keyword, StringComparison.Ordinal))
+                                    {
+                                        // New diagram starts - end current block
+                                        mermaidContinues = false;
+                                        break;
+                                    }
+                                }
+
+                                if (!isMermaidContinuation)
+                                    mermaidContinues = false;
+                                else
+                                    mermaidContinues = true;
+                                break;
+                            }
+                        }
+
+                        if (mermaidContinues)
+                        {
+                            mermaidBuffer.AppendLine(line);
+                        }
+                        else
+                        {
+                            // End mermaid block - flush as fenced code block
+                            result.AppendLine("```mermaid");
+                            result.Append(mermaidBuffer.ToString().TrimEnd());
+                            result.AppendLine();
+                            result.AppendLine("```");
+                            result.AppendLine();
+                            inMermaidBlock = false;
+                        }
+                    }
+                    else
+                    {
+                        mermaidBuffer.AppendLine(line);
+                    }
+                }
+                else
+                {
+                    // Regular text line
+                    result.AppendLine(line);
+                }
+            }
+
+            // Flush any remaining mermaid block at end of content
+            if (inMermaidBlock && mermaidBuffer.Length > 0)
+            {
+                result.AppendLine("```mermaid");
+                result.Append(mermaidBuffer.ToString().TrimEnd());
+                result.AppendLine();
+                result.AppendLine("```");
+            }
+
+            return result.ToString();
+        }
+
+        /// <summary>
+        /// Gets the Mermaid.js initialization script with theme support.
+        /// </summary>
+        private static string GetMermaidInitScript(bool isDarkMode)
+        {
+            string mermaidTheme = isDarkMode ? "dark" : "default";
+            return $@"
+    <script src=""{MERMAID_CDN_URL}""></script>
+    <script>
+        // Wait for mermaid.js to load, then initialize
+        function initMermaid() {{
+            if (typeof mermaid === 'undefined') return;
+
+            // Save original source for re-rendering on theme switch
+            // Handles both <div class=""mermaid""> (Markdig DiagramExtension) and <pre class=""mermaid"">
+            document.querySelectorAll('.mermaid').forEach(function(el) {{
+                if (!el.getAttribute('data-mermaid-source')) {{
+                    el.setAttribute('data-mermaid-source', el.textContent);
+                }}
+            }});
+
+            mermaid.initialize({{
+                startOnLoad: false,
+                theme: '{mermaidTheme}',
+                securityLevel: 'loose'
+            }});
+            mermaid.run();
+        }}
+
+        // Handle both sync and async script loading
+        if (typeof mermaid !== 'undefined') {{
+            initMermaid();
+        }} else {{
+            // CDN script may still be loading — retry briefly
+            var attempts = 0;
+            var timer = setInterval(function() {{
+                attempts++;
+                if (typeof mermaid !== 'undefined') {{
+                    clearInterval(timer);
+                    initMermaid();
+                }} else if (attempts > 50) {{
+                    clearInterval(timer);
+                    console.error('Mermaid.js failed to load from CDN');
+                }}
+            }}, 100);
+        }}
+    </script>";
         }
 
         /// <summary>
@@ -202,20 +461,55 @@ namespace ModernTextViewer.src.Services
             try
             {
                 string htmlContent = ConvertMarkdownToHtml(markdownText);
-                
+
+                // Detect mermaid content in the HTML output.
+                // Markdig with DiagramExtension (UseAdvancedExtensions) outputs <pre class="mermaid">.
+                // Fallback: non-diagram pipelines output <pre><code class="language-mermaid">.
+                bool hasMermaid = MermaidPreRegex.IsMatch(htmlContent) ||
+                                  MermaidCodeBlockRegex.IsMatch(htmlContent);
+                if (hasMermaid)
+                {
+                    // Convert any <pre><code class="language-mermaid"> to <pre class="mermaid">
+                    // (<pre class="mermaid"> from DiagramExtension is already Mermaid.js compatible)
+                    htmlContent = PostProcessMermaidBlocks(htmlContent);
+                }
+
                 // Check if content is large and needs optimization
                 if (ENABLE_CHUNKING && htmlContent.Length > LARGE_CONTENT_THRESHOLD)
                 {
-                    return GenerateOptimizedLargeContentHtml(htmlContent, isDarkMode);
+                    return GenerateOptimizedLargeContentHtml(htmlContent, isDarkMode, hasMermaid);
                 }
-                
+
                 // Standard path for smaller content
-                return GenerateStandardUniversalHtml(htmlContent, isDarkMode);
+                return GenerateStandardUniversalHtml(htmlContent, isDarkMode, hasMermaid);
             }
             catch (Exception ex)
             {
                 return GenerateErrorUniversalDocument(ex.Message, isDarkMode);
             }
+        }
+
+        /// <summary>
+        /// Generates themed HTML specifically for .mmd Mermaid diagram files.
+        /// Handles mixed content by auto-detecting mermaid blocks and wrapping them appropriately.
+        /// </summary>
+        public static string GenerateMermaidFileHtml(string content, bool isDarkMode)
+        {
+            if (string.IsNullOrEmpty(content))
+            {
+                return GenerateEmptyUniversalDocument(isDarkMode);
+            }
+
+            // Pre-process to wrap detected mermaid blocks in fenced code blocks
+            string preprocessed = PreProcessMermaidFileContent(content);
+
+            // Convert through the normal markdown pipeline
+            string htmlContent = ConvertMarkdownToHtml(preprocessed);
+
+            // Post-process mermaid code blocks for Mermaid.js
+            htmlContent = PostProcessMermaidBlocks(htmlContent);
+
+            return GenerateStandardUniversalHtml(htmlContent, isDarkMode, hasMermaid: true);
         }
 
         /// <summary>
@@ -225,7 +519,7 @@ namespace ModernTextViewer.src.Services
         /// <param name="htmlContent">The converted HTML content (assumed to be large)</param>
         /// <param name="isDarkMode">Theme state for initial rendering</param>
         /// <returns>HTML document optimized for large content rendering</returns>
-        private static string GenerateOptimizedLargeContentHtml(string htmlContent, bool isDarkMode)
+        private static string GenerateOptimizedLargeContentHtml(string htmlContent, bool isDarkMode, bool hasMermaid = false)
         {
             string themeAttribute = isDarkMode ? "dark" : "light";
             
@@ -300,23 +594,29 @@ namespace ModernTextViewer.src.Services
             htmlBuilder.AppendLine("    <script>");
             htmlBuilder.AppendLine(GetProgressiveLoadingScript());
             htmlBuilder.AppendLine("    </script>");
-            
+
+            // Add Mermaid.js if mermaid content was detected
+            if (hasMermaid)
+            {
+                htmlBuilder.AppendLine(GetMermaidInitScript(isDarkMode));
+            }
+
             htmlBuilder.AppendLine("</body>");
             htmlBuilder.AppendLine("</html>");
-            
+
             return htmlBuilder.ToString();
         }
-        
+
         /// <summary>
         /// Generates standard HTML for normal-sized content without performance optimizations.
         /// </summary>
         /// <param name="htmlContent">The converted HTML content</param>
         /// <param name="isDarkMode">Theme state for rendering</param>
         /// <returns>Standard HTML document</returns>
-        private static string GenerateStandardUniversalHtml(string htmlContent, bool isDarkMode)
+        private static string GenerateStandardUniversalHtml(string htmlContent, bool isDarkMode, bool hasMermaid = false)
         {
             string themeAttribute = isDarkMode ? "dark" : "light";
-            
+
             var htmlBuilder = new StringBuilder();
             htmlBuilder.AppendLine("<!DOCTYPE html>");
             htmlBuilder.AppendLine($"<html lang=\"en\" data-theme=\"{themeAttribute}\">");
@@ -332,9 +632,16 @@ namespace ModernTextViewer.src.Services
             htmlBuilder.AppendLine("    <div class=\"markdown-body\">");
             htmlBuilder.AppendLine(htmlContent);
             htmlBuilder.AppendLine("    </div>");
+
+            // Add Mermaid.js if mermaid content was detected
+            if (hasMermaid)
+            {
+                htmlBuilder.AppendLine(GetMermaidInitScript(isDarkMode));
+            }
+
             htmlBuilder.AppendLine("</body>");
             htmlBuilder.AppendLine("</html>");
-            
+
             return htmlBuilder.ToString();
         }
         

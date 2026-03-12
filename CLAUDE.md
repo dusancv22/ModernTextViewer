@@ -7,10 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ModernTextViewer is a Windows Forms application built with .NET 8.0 that provides a modern text viewing and editing experience with features including:
 - Dark/light mode support with instant theme switching (<500ms)
 - Auto-save functionality (5-minute intervals)
-- Support for multiple file formats (.txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt, .md, .markdown, .html, .htm, .nfo) plus read-only preview for .docx
+- Support for multiple file formats (.txt, .log, .csv, .json, .xml, .ini, .config, .cs, .srt, .md, .markdown, .html, .htm, .nfo, .mmd) plus read-only preview for .docx
 - NFO file support with automatic encoding detection (CP437 for ASCII art, Windows-1251 for Cyrillic content)
-- Preview/raw mode toggle for markdown and HTML files with WebView2-powered HTML rendering
-- PDF export functionality for markdown, HTML, and DOCX-derived content using WebView2's native print dialog
+- Mermaid diagram support: visual rendering in preview mode for `.mmd` files and ```mermaid fenced code blocks in Markdown, with auto-detection in mixed content
+- Preview/raw mode toggle for markdown, HTML, and Mermaid files with WebView2-powered HTML rendering
+- PDF export functionality for markdown, HTML, DOCX-derived, and Mermaid content using WebView2's native print dialog
 - Custom borderless window with P/Invoke-based dragging and resizing
 - Font customization and zoom controls (Ctrl+Plus/Minus, Ctrl+Scroll)
 - Find/Replace dialog with regex support
@@ -107,7 +108,7 @@ The application follows a Model-View-Service pattern with these key components:
 
 ### PDF Export Implementation
 - **Toolbar Integration**: PDF export button (📄) positioned first in the toolbar (leftmost position)
-- **File Type Detection**: Uses `DocumentModel.SupportsPreview()` (Markdown `.md`/`.markdown` and HTML `.html`/`.htm`)
+- **File Type Detection**: Uses `DocumentModel.SupportsPreview()` (Markdown `.md`/`.markdown`, HTML `.html`/`.htm`, `.docx`, and Mermaid `.mmd`)
 - **Button State Management**: `UpdatePdfExportButtonState()` enables/disables button based on preview support or active preview mode
 - **Export Handler**: `PdfExportButton_Click` automatically switches to preview mode if needed (Markdown or HTML)
 - **WebView2 Integration**: Calls `ShowPrintUI()` method for native Windows print dialog
@@ -128,13 +129,14 @@ The application follows a Model-View-Service pattern with these key components:
 4. Test with WebView2 Runtime uninstalled to verify error handling
 
 ### File Format Support
-1. Preview/PDF support is controlled by `DocumentModel.SupportsPreview()` (currently `.md`, `.markdown`, `.html`, `.htm`, `.docx`)
+1. Preview/PDF support is controlled by `DocumentModel.SupportsPreview()` (currently `.md`, `.markdown`, `.html`, `.htm`, `.docx`, `.mmd`)
 2. Markdown preview uses `PreviewService.GenerateUniversalThemeHtml()` to build themed HTML
 3. HTML preview navigates WebView2 directly to the local file URI so relative assets (CSS/JS/images) resolve
 4. DOCX preview uses `DocxPreviewService` to extract plain text and then treats it like Markdown/plain text for preview/export
-5. NFO files use automatic encoding detection: `DetectNfoEncoding()` analyzes content and selects CP437 (code page 437) for ASCII art or Windows-1251 (code page 1251) for Cyrillic text. On save, Cyrillic Unicode characters (U+0400-U+052F) trigger Windows-1251, otherwise CP437 is used.
-6. All text operations work on any text-based file; DOCX is treated as read-only source (Quick Save/Auto-save will not overwrite .docx)
-7. Binary file detection not implemented - will corrupt binary files
+5. Mermaid diagram files (`.mmd`) use `PreviewService.GenerateMermaidFileHtml()` which auto-detects diagram blocks in mixed content, wraps them in fenced code blocks, and renders via Mermaid.js CDN. Markdown files with ```mermaid fenced code blocks are also automatically detected and rendered as visual diagrams.
+6. NFO files use automatic encoding detection: `DetectNfoEncoding()` analyzes content and selects CP437 (code page 437) for ASCII art or Windows-1251 (code page 1251) for Cyrillic text. On save, Cyrillic Unicode characters (U+0400-U+052F) trigger Windows-1251, otherwise CP437 is used.
+7. All text operations work on any text-based file; DOCX is treated as read-only source (Quick Save/Auto-save will not overwrite .docx)
+8. Binary file detection not implemented - will corrupt binary files
 
 ### Toolbar Organization
 Current toolbar button order (left to right):
@@ -173,6 +175,7 @@ When making changes, verify:
 5. Preview mode renders markdown correctly with tables, code blocks, lists
 6. Preview mode renders HTML files by navigating WebView2 directly to the file URI
 7. Preview mode renders DOCX files by extracting plain text and displaying it via the Markdown-style preview
+8. Mermaid diagrams (.mmd files and ```mermaid blocks in Markdown) are rendered visually using Mermaid.js with theme-aware rendering
 8. PDF export button is enabled for Markdown/HTML/DOCX-derived content and automatically switches to preview mode and opens print dialog
 9. Window can be dragged by title bar and resized from all edges
 10. Font dialog changes apply to text and persist across sessions

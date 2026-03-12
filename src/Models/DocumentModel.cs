@@ -99,6 +99,7 @@ namespace ModernTextViewer.src.Models
         /// <item>.html</item>
         /// <item>.htm</item>
         /// <item>.docx</item>
+        /// <item>.mmd</item>
         /// </list>
         /// Returns <c>false</c> if <see cref="FilePath"/> is null, empty, or has no extension.
         /// </remarks>
@@ -124,12 +125,13 @@ namespace ModernTextViewer.src.Models
             // Convert to lowercase for case-insensitive comparison
             extension = extension.ToLowerInvariant();
 
-            // Support preview for Markdown, HTML, and DOCX files
-            return extension == ".md" 
+            // Support preview for Markdown, HTML, DOCX, and Mermaid files
+            return extension == ".md"
                 || extension == ".markdown"
                 || extension == ".html"
                 || extension == ".htm"
-                || extension == ".docx";
+                || extension == ".docx"
+                || extension == ".mmd";
         }
 
         protected virtual void OnFilePathChanged()
